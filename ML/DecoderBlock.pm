@@ -83,7 +83,8 @@ sub get_weights {
             d_ff => $self->{d_ff},
             self_attention_block => $self->{self_attention_block}->get_weights(),
             cross_attention_block => $self->{cross_attention_block}->get_weights(),
-            feed_forward_block => $self->{feed_forward_block}->get_weights()
+            feed_forward_block => $self->{feed_forward_block}->get_weights(),
+            residual_connections => [ map { $_->get_weights() } @{$self->{residual_connections}} ],
           };
 }
 

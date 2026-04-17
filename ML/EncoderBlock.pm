@@ -77,7 +77,8 @@ sub get_weights {
             num_heads => $self->{num_heads},
             d_ff => $self->{d_ff},
             attention_block => $self->{attention_block}->get_weights(),
-            feed_forward_block => $self->{feed_forward_block}->get_weights()
+            feed_forward_block => $self->{feed_forward_block}->get_weights(),
+            residual_connections => [ map { $_->get_weights() } @{$self->{residual_connections}} ],
           };
 }
 

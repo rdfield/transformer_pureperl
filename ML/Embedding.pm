@@ -3,7 +3,8 @@ package ML::Embedding;
 use lib '/home/mvine/imagenet';
 use Modern::Perl;
 use Math::Random qw(random_uniform);
-use ML::Util qw(print_2d_array print_1d_array add_2_arrays matmul linear transpose adam_optimiser);
+use Math::Random::OO::Normal;
+use ML::Util qw(print_2d_array print_1d_array add_2_arrays matmul linear transpose adam_optimiser clip_grad_norm);
 use Storable qw(dclone);
 use Data::Dumper;
 use Carp qw(cluck);
@@ -17,30 +18,27 @@ sub type {
 sub optimise {
    my $self = shift;
    my %args = @_;
+   my $lr    = $args{learning_rate} // 0.001;
+   my $beta1 = 0.9;
+   my $beta2 = 0.999;
+   my $t     = $self->{adam_step};
    my %updated;
    foreach my $b ( 0 .. $self->{batch_size} - 1) {
       foreach my $i (0 .. $self->{seq_length} - 1) {
          my $tok = $self->{input}[$b][$i];
          next if defined($self->{pad_id}) && $tok == $self->{pad_id};
-         next if $updated{$tok}++;   # apply dW[tok] exactly once
+         next if $updated{$tok}++;   # apply dW[tok] exactly once per step
+         clip_grad_norm($self->{dW}[$tok]);
          foreach my $j (0 .. $self->{embeddings} - 1) {
-            $self->{W}[$tok][$j] -= $args{learning_rate} * $self->{dW}[$tok][$j];
-         }
-         if ($self->{max_norm}) {
-            my $row_total = 0;
-            foreach my $j (0 .. $self->{embeddings} - 1) {
-               $row_total += $self->{W}[$i][$j]**2;
-            }
-            $row_total = sqrt($row_total);
-            if ($row_total > $self->{max_norm}) {
-               my $scale_factor = $self->{max_norm} / $row_total;
-               foreach my $j (0 .. $self->{embeddings} - 1) {
-                  $self->{W}[$i][$j] *= $scale_factor;
-               }
-            }
+            $self->{m_W}[$tok][$j] = $beta1 * $self->{m_W}[$tok][$j] + (1 - $beta1) * $self->{dW}[$tok][$j];
+            $self->{v_W}[$tok][$j] = $beta2 * $self->{v_W}[$tok][$j] + (1 - $beta2) * $self->{dW}[$tok][$j] ** 2;
+            my $m_hat = $self->{m_W}[$tok][$j] / (1 - $beta1 ** $t);
+            my $v_hat = $self->{v_W}[$tok][$j] / (1 - $beta2 ** $t);
+            $self->{W}[$tok][$j] -= $lr * $m_hat / (sqrt($v_hat) + 1e-8);
          }
       }
    }
+   $self->{adam_step}++;
 }
 
 
@@ -66,7 +64,7 @@ sub backward {
    }
    foreach my $b ( 0 .. $self->{batch_size} - 1) {
       foreach my $s ( 0 .. $self->{seq_length} - 1) {
-         foreach my $e ( 0 ... $self->{embeddings} - 1) {
+         foreach my $e ( 0 .. $self->{embeddings} - 1) {
             $self->{dW}->[$self->{input}[$b][$s]][$e] += $in_grad->[$b][$s][$e];
          }
       }
@@ -90,21 +88,38 @@ sub parameter_count {
 sub initialise_weights {
    my $self = shift;
    $self->{W} = [];
+   $self->{m_W} = [];
+   $self->{v_W} = [];
+   # N(0, 1/sqrt(d_model)) so that after InputEmbeddings' sqrt(d_model) multiplier,
+   # output has std ~1, matching the scale of sinusoidal positional embeddings.
+   my $prng = Math::Random::OO::Normal->new(0, 1.0 / sqrt($self->{embeddings}));
    foreach my $row ( 0 .. $self->{vocab_size} - 1) {
       foreach my $col ( 0 .. $self->{embeddings} - 1) {
-         $self->{W}[$row][$col] = random_uniform(1, -1 , 1);
+         $self->{W}[$row][$col]   = $prng->next();
+         $self->{m_W}[$row][$col] = 0;
+         $self->{v_W}[$row][$col] = 0;
       }
    }
+   $self->{adam_step} = 1;
 }
 
 sub set_weights {
    my $self = shift;
    my %args = @_;
-   if (!defined($args{weights})) { 
-      # randomly initialise weights
+   if (!defined($args{weights})) {
       $self->initialise_weights();
    } else {
-      $self->{W} = $args{weights}; 
+      $self->{W} = $args{weights};
+      # zero-init moments on reload (standard — Adam moments not serialised)
+      $self->{m_W} = [];
+      $self->{v_W} = [];
+      foreach my $row ( 0 .. $self->{vocab_size} - 1) {
+         foreach my $col ( 0 .. $self->{embeddings} - 1) {
+            $self->{m_W}[$row][$col] = 0;
+            $self->{v_W}[$row][$col] = 0;
+         }
+      }
+      $self->{adam_step} = 1;
    }
 }
 

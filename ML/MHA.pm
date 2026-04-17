@@ -1,7 +1,7 @@
 package ML::MHA;
 use Modern::Perl;
 use ML::Linear;
-use ML::Util qw(print_2d_array scaled_dot_product_attention add_2_arrays randn matmul transpose mult_2_arrays adam_optimiser);
+use ML::Util qw(print_2d_array scaled_dot_product_attention add_2_arrays randn matmul transpose mult_2_arrays adam_optimiser clip_grad_norm);
 use Storable qw(dclone);
 use Carp qw(confess);
 
@@ -59,10 +59,21 @@ sub new {
    $self->{dropout} = $dropout;
 
 # switch these from Linear to arrays, embeddings x embeddings, otherwise the backprop doesn't work
-   $self->{W_q} = defined($args{W_q})?dclone($args{W_q}):randn($self->{embeddings},$self->{embeddings});
-   $self->{W_v} = defined($args{W_v})?dclone($args{W_v}):randn($self->{embeddings},$self->{embeddings});
-   $self->{W_k} = defined($args{W_k})?dclone($args{W_k}):randn($self->{embeddings},$self->{embeddings});
-   $self->{W_o} = defined($args{W_o})?dclone($args{W_o}):randn($self->{embeddings},$self->{embeddings});
+# Xavier init: scale N(0,1) by 1/sqrt(fan_in) so pre-softmax scores have unit-ish variance
+   my $xscale = 1.0 / sqrt($self->{embeddings});
+   my $xavier = sub {
+      my $W = randn($self->{embeddings}, $self->{embeddings});
+      for my $i (0 .. $#$W) {
+         for my $j (0 .. $#{$W->[0]}) {
+            $W->[$i][$j] *= $xscale;
+         }
+      }
+      return $W;
+   };
+   $self->{W_q} = defined($args{W_q})?dclone($args{W_q}):$xavier->();
+   $self->{W_v} = defined($args{W_v})?dclone($args{W_v}):$xavier->();
+   $self->{W_k} = defined($args{W_k})?dclone($args{W_k}):$xavier->();
+   $self->{W_o} = defined($args{W_o})?dclone($args{W_o}):$xavier->();
    
 
    $self->{d_k} = int( $self->{embeddings} / $num_heads);
@@ -81,7 +92,7 @@ sub new {
    }
    $self->{adam_beta1} = 0.9;
    $self->{adam_beta2} = 0.999;
-   $self->{adam_epoch} = 1;
+   $self->{adam_step} = 1;
 
    return bless $self, $class;
 }
@@ -424,7 +435,11 @@ sub optimise {
    my $self = shift;
    my %args = @_;
    my $lr = $args{learning_rate} || 0.001;
-   my $t  = $self->{adam_epoch};
+   my $t  = $self->{adam_step};
+   clip_grad_norm($self->{dWo});
+   clip_grad_norm($self->{dWq});
+   clip_grad_norm($self->{dWk});
+   clip_grad_norm($self->{dWv});
    adam_optimiser($self->{dWo}, $self->{m_W_o}, $self->{v_W_o}, $self->{W_o}, $lr, $self->{adam_beta1}, $self->{adam_beta2}, $t);
    adam_optimiser($self->{dWq}, $self->{m_W_q}, $self->{v_W_q}, $self->{W_q}, $lr, $self->{adam_beta1}, $self->{adam_beta2}, $t);
    adam_optimiser($self->{dWk}, $self->{m_W_k}, $self->{v_W_k}, $self->{W_k}, $lr, $self->{adam_beta1}, $self->{adam_beta2}, $t);
@@ -439,7 +454,7 @@ sub optimise {
    $self->{dWq} = [];
    $self->{dWv} = [];
    $self->{dWk} = [];
-   $self->{adam_epoch}++;
+   $self->{adam_step}++;
 }
 
 1;

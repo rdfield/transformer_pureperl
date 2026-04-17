@@ -1,0 +1,8 @@
+ 1. Dropout doesn't store masks for backward — consistent across all modules. Adds noise but doesn't prevent learning. Standard        
+  practice would use inverted dropout, but this is a minor efficiency issue, not a correctness bug.
+  2. Dead code with latent bugs: EncoderBlock::initialise() and DecoderBlock::initialise() reference $self->{ln_layer} which doesn't    
+  exist (layer norm lives inside the ResidualConnections). Never called in practice.                                                    
+  3. PositionalEmbeddings backward uses $args{next}->{gradient} (direct hash access) instead of $args{next}->gradient() method call —
+  works but fragile if the gradient interface changes.                                                                                  
+                                                               
+

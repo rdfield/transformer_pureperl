@@ -9,6 +9,7 @@ use Storable qw(dclone);
 use Cwd qw(abs_path);
 use Math::Random qw(random_uniform);
 use ML::Util qw(print_2d_array add_2_arrays rotate_matrix_180);
+use ML::LossGradient;
 
 sub type {
    return "ML::PositionwiseFeedForward";
@@ -25,7 +26,6 @@ sub get_weights {
    my $self = shift;
    return { 
            l1 => $self->{l1}->get_weights(),
-           activation => $self->{activation}->{get_weights},
            dropout => $self->{dropout},
            l2 => $self->{l2}->get_weights(),
            embeddings =>  $self->{insize},
@@ -45,66 +45,62 @@ sub forward {
    my $self = shift;
    my %args = @_;
    $self->{input} = dclone($args{batch});
-
    $self->{batch_size} = scalar(@{$self->{input}});
 
-   my $output = [];
-   foreach my $b (0 .. scalar(@{$self->{input}}) - 1) {
-      if ($self->{debug}) {
-         print_2d_array("pff input $b", $self->{input}[$b]);
-      }
-      $output->[$b] = $self->{l1}->forward( batch => $self->{input}[$b] );
-      $output->[$b] = $self->{activation}->forward( batch => $output->[$b] );
-      if (defined($self->{dropout})) {
-         foreach my $x (0 .. $#{$output->[0]}) {
-            foreach my $y (0 .. $#{$output->[0][0]}) {
-               my $rand = rand();
-               if ($rand < $self->{dropout}) {
+   # Pass the full 3D batch through l1, activation, l2 so that each layer
+   # stores all batch slices in its {input} — required for correct backward.
+   my $output = $self->{l1}->forward( batch => $self->{input} );
+   $output = $self->{activation}->forward( batch => $output );
+   $self->{dropout_mask} = undef;
+   if (defined($self->{dropout})) {
+      my $scale = 1.0 / (1.0 - $self->{dropout});
+      for my $b (0 .. $self->{batch_size} - 1) {
+         for my $x (0 .. $#{$output->[$b]}) {
+            for my $y (0 .. $#{$output->[$b][$x]}) {
+               if (rand() < $self->{dropout}) {
+                  $self->{dropout_mask}[$b][$x][$y] = 0;
                   $output->[$b][$x][$y] = 0;
+               } else {
+                  $self->{dropout_mask}[$b][$x][$y] = $scale;
+                  $output->[$b][$x][$y] *= $scale;
                }
             }
          }
       }
-      $output->[$b] = $self->{l2}->forward( batch => $output->[$b] );
    }
-
+   $output = $self->{l2}->forward( batch => $output );
    return $output;
 }
  
 sub backward {
    my $self = shift;
    my %params = @_;
-   
+
    $self->{batch_size} ||= $params{batch_size};
- 
-   my $next = $params{ next };
+
+   my $next = $params{next};
    if ($self->{debug}) {
       say "pff backward next => " . ref($next);
    }
 
-   my $in_gradients = $next->gradient();
-
-   foreach my $b ( 0 .. $self->{batch_size} - 1) {
-      {
-        package ML::Dummy;
-        sub new { my $class = shift; bless { @_ }, $class }
-        sub gradient { shift->{data} }
+   # Backprop through l2 → activation → l1 using the full 3D gradient.
+   $self->{l2}->backward( next => $next );
+   # Apply dropout mask to the gradient flowing from l2 back into activation.
+   if (defined($self->{dropout}) && defined($self->{dropout_mask})) {
+      my $masked = dclone($self->{l2}->gradient());
+      for my $b (0 .. $#$masked) {
+         for my $x (0 .. $#{$masked->[$b]}) {
+            for my $y (0 .. $#{$masked->[$b][$x]}) {
+               $masked->[$b][$x][$y] *= $self->{dropout_mask}[$b][$x][$y];
+            }
+         }
       }
-      if ($self->{debug}) {
-         print_2d_array("pff backward input gradients $b", $in_gradients->[$b]);
-      }
-      my $dummy_gradients = ML::Dummy->new(data => $in_gradients->[$b]);
-
-      $self->{l2}->backward( next => $dummy_gradients );
+      $self->{activation}->backward( next => ML::LossGradient->new(gradient => $masked) );
+   } else {
       $self->{activation}->backward( next => $self->{l2} );
-      $self->{l1}->backward( next => $self->{activation} );
-      if ($self->{debug}) {
-         print_2d_array("activation backward gradients", $self->{activation}->gradient());
-         print_2d_array("l2 backward gradients", $self->{l2}->gradient());
-         print_2d_array("l1 backward gradients", $self->{l1}->gradient());
-      }
-      $self->{gradient}->[$b] = $self->{l1}->gradient();
    }
+   $self->{l1}->backward( next => $self->{activation} );
+   $self->{gradient} = $self->{l1}->gradient();
 }
 
 sub gradient {

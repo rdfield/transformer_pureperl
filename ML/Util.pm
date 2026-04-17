@@ -2,10 +2,11 @@ use Modern::Perl;
 package ML::Util;
 use Data::Dumper;
 use Exporter 'import';
-our @EXPORT_OK = qw(print_2d_array transpose add_2_arrays mult_2_arrays diagonal_matrix matmul 
-                    print_1d_array rotate_matrix_180 conv2d linear add_constant div_constant 
+our @EXPORT_OK = qw(print_2d_array transpose add_2_arrays mult_2_arrays diagonal_matrix matmul
+                    print_1d_array rotate_matrix_180 conv2d linear add_constant div_constant
                     adam_optimiser softmax scaled_dot_product_attention mult_constant randn
-                    create_src_mask create_tgt_mask tokenize_sequence pad_sequence);
+                    create_src_mask create_tgt_mask tokenize_sequence pad_sequence
+                    clip_grad_norm);
 
 use Carp qw(croak confess);
 use Math::Random::OO::Normal;
@@ -13,6 +14,26 @@ my $prng = Math::Random::OO::Normal->new();
 
 
 my $eps = 1e-08;
+
+# Clip a 1D or 2D gradient array in-place to have Frobenius/L2 norm <= max_norm.
+sub clip_grad_norm {
+   my ($data, $max_norm) = @_;
+   $max_norm //= 1e9;
+   my $norm_sq = 0;
+   if (ref($data->[0]) eq 'ARRAY') {
+      for my $row (@$data) { $norm_sq += $_ * $_ for @$row; }
+   } else {
+      $norm_sq += $_ * $_ for @$data;
+   }
+   my $norm = sqrt($norm_sq);
+   return if $norm <= $max_norm;
+   my $scale = $max_norm / $norm;
+   if (ref($data->[0]) eq 'ARRAY') {
+      for my $row (@$data) { $_ *= $scale for @$row; }
+   } else {
+      $_ *= $scale for @$data;
+   }
+}
 
 sub adam_optimiser {
    my ($g, $m, $v, $x, $alpha, $beta1, $beta2, $t) = @_;
@@ -504,6 +525,20 @@ sub scaled_dot_product_attention {
          }
       }
    }
+   # NaN/inf guard: the stable softmax (max subtraction) handles any finite score
+   # correctly, but genuine NaN/inf from upstream must be caught.
+   # Clamp is intentionally large (1e4) — a value of 30 was crippling attention
+   # learning at d=256 where random-init scores have std in the thousands.
+   foreach my $i (0 .. $#$query) {
+      foreach my $j (0 .. $#{$query->[0]}) {
+         foreach my $x (0 .. $#{$attention_scores->[$i][$j]}) {
+            foreach my $y (0 .. $#{$attention_scores->[$i][$j][$x]}) {
+               my $v = $attention_scores->[$i][$j][$x][$y];
+               $attention_scores->[$i][$j][$x][$y] = 1e4 unless $v <= 1e4;
+            }
+         }
+      }
+   }
    my $attention_weights = [];
    foreach my $i (0 .. $#$query) {
       foreach my $j (0 .. $#{$query->[0]}) {
@@ -514,13 +549,15 @@ sub scaled_dot_product_attention {
    }
 
    if (defined($dropout)) {
+      my $scale = 1.0 / (1.0 - $dropout);
       foreach my $i (0 .. $#$query) {
          foreach my $j (0 .. $#{$query->[0]}) {
             foreach my $x (0 .. $#{$attention_weights->[0][0]}) {
                foreach my $y (0 .. $#{$attention_weights->[0][0][0]}) {
-                  my $rand = rand();
-                  if ($rand < $dropout) {
+                  if (rand() < $dropout) {
                      $attention_weights->[$i][$j][$x][$y] = 0;
+                  } else {
+                     $attention_weights->[$i][$j][$x][$y] *= $scale;
                   }
                }
             }

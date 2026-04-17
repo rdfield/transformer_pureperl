@@ -1,0 +1,4 @@
+*.json          # checkpoint files - large and regeneratable                                                                          
+emails.txt      # corpus data - may be sensitive                                                                                      
+email_categories.csv  # client data - definitely sensitive                                                                            
+ml_fixes.tar.gz                          

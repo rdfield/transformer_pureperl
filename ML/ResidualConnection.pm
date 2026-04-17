@@ -2,12 +2,14 @@ package ML::ResidualConnection;
 
 use Modern::Perl;
 use ML::Linear;
+use ML::LayerNormalisation;
 use Data::Dumper;
 use Storable qw(dclone);
 
 use Cwd qw(abs_path);
 use Math::Random qw(random_uniform);
 use ML::Util qw(print_2d_array add_2_arrays rotate_matrix_180);
+use ML::LossGradient;
 use Carp qw(confess cluck);
 
 sub type {
@@ -47,13 +49,18 @@ sub forward {
       $output = $args{sublayer}->forward( batch => $self->{input}, batch_1 => $args{batch_1}, batch_2 => $args{batch_2}, mask => $args{mask} );
    }
    $self->{sublayer} = $args{sublayer};
-   foreach my $b (0 .. scalar(@{$self->{input}}) - 1) {
-      if (defined($self->{dropout})) {
-         foreach my $x (0 .. $#{$output->[0]}) {
-            foreach my $y (0 .. $#{$output->[0][0]}) {
-               my $rand = rand();
-               if ($rand < $self->{dropout}) {
+   $self->{dropout_mask} = undef;
+   if (defined($self->{dropout})) {
+      my $scale = 1.0 / (1.0 - $self->{dropout});
+      foreach my $b (0 .. scalar(@{$self->{input}}) - 1) {
+         foreach my $x (0 .. $#{$output->[$b]}) {
+            foreach my $y (0 .. $#{$output->[$b][$x]}) {
+               if (rand() < $self->{dropout}) {
+                  $self->{dropout_mask}[$b][$x][$y] = 0;
                   $output->[$b][$x][$y] = 0;
+               } else {
+                  $self->{dropout_mask}[$b][$x][$y] = $scale;
+                  $output->[$b][$x][$y] *= $scale;
                }
             }
          }
@@ -90,8 +97,29 @@ sub backward {
    if ($self->{debug}) {
       say "residual connection sublayer => " . ref($self->{sublayer});
    }
-   $self->{sublayer}->backward(next => $self->{ln_layer});
-   $self->{gradient} = $self->{sublayer}->gradient();
+   # Apply dropout mask to the gradient flowing into the sublayer.
+   # The skip path (identity) receives the unmasked ln_layer gradient.
+   if (defined($self->{dropout}) && defined($self->{dropout_mask})) {
+      my $masked = dclone($ln_gradients);
+      for my $b (0 .. $#$masked) {
+         for my $x (0 .. $#{$masked->[$b]}) {
+            for my $y (0 .. $#{$masked->[$b][$x]}) {
+               $masked->[$b][$x][$y] *= $self->{dropout_mask}[$b][$x][$y];
+            }
+         }
+      }
+      $self->{sublayer}->backward(next => ML::LossGradient->new(gradient => $masked));
+   } else {
+      $self->{sublayer}->backward(next => $self->{ln_layer});
+   }
+   # The skip connection means the input gradient has two contributions:
+   #   1. Through the sublayer: sublayer->gradient()
+   #   2. Direct skip path:    ln_layer->gradient()  (dz/dx = I)
+   my $sub_grad = $self->{sublayer}->gradient();
+   $self->{gradient} = [];
+   for my $b (0 .. scalar(@$sub_grad) - 1) {
+      $self->{gradient}[$b] = add_2_arrays($sub_grad->[$b], $ln_gradients->[$b]);
+   }
 }
 
 sub gradient {
