@@ -4,7 +4,7 @@ use Modern::Perl;
 use Cwd qw(abs_path);
 use Math::Random qw(random_uniform);
 use Math::Random::OO::Normal;
-use ML::Util qw(print_2d_array print_1d_array add_2_arrays matmul linear transpose adam_optimiser);
+use ML::Util qw(print_2d_array print_1d_array add_2_arrays matmul linear transpose adam_optimiser clip_grad_norm);
 use Storable qw(dclone);
 use Carp qw(confess);
 use Data::Dumper;
@@ -24,6 +24,7 @@ sub optimise {
       print_2d_array( $self->name() . " bias gradient ",  $self->{bias_grad} );
       print_2d_array( $self->name() . " biases ",  $self->{biases} );
    }
+   clip_grad_norm($self->{bias_grad});
    adam_optimiser(  $self->{bias_grad} , $self->{m_biases} ,  $self->{v_biases} ,  $self->{biases} ,
                             $learning_rate, $self->{beta1}, $self->{beta2}, $self->{epoch} );
    if ( $self->{debug} ) {
@@ -36,6 +37,7 @@ sub optimise {
       print_2d_array($self->{name} .  "weights_grad " , $self->{weights_grad});
       print_2d_array($self->{name} .  "weights before " , $self->{W});
    }
+   clip_grad_norm($self->{weights_grad});
    adam_optimiser(  $self->{weights_grad} ,  $self->{m_W} ,  $self->{v_W} ,  $self->{W} ,
                             $learning_rate, $self->{beta1}, $self->{beta2}, $self->{epoch} );
    if ( $self->{debug} ) {
@@ -278,7 +280,7 @@ sub forward {
    my %args = @_;
    $self->{alpha} = 0.1;
    $self->{beta1} = 0.9;
-   $self->{beta2} = 0.999;
+   $self->{beta2} = 0.98;#99;
 
    my $batch = $args{batch};
 if (ref($batch) eq "") {

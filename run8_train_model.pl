@@ -197,7 +197,7 @@ my $num_heads = 4;#8
 my $dropout = 0.1;
 my $NUM_EPOCHS = 15;
 my $d_ff = 1024;#2048
-my $LEARNING_RATE  = 0.001;  # to match pytorch version - also try 0.0003: 0.01 definitely overshoots, looks like 0.001 isn't great either
+my $LEARNING_RATE  = 0.0001;  # to match pytorch version - also try 0.0003: 0.01 definitely overshoots, looks like 0.001 isn't great either
 my $WARMUP_EPOCHS  = 3;      # linear ramp from LR/3 to LR over first 3 epochs
 
 
@@ -298,7 +298,7 @@ foreach my $epoch (1 .. $NUM_EPOCHS) {
     say "-" x 50;
     say "End of Epoch $epoch | Time: ${epoch_duration}s | lr: $eff_lr | Avg Loss: $avg_epoch_loss";
     say "-" x 50;
-    $transformer_model->save_model( filename => "d${d_model}_l${num_layers}_h${num_heads}_${epoch}.json" );
+    $transformer_model->save_model( filename => "run8_d${d_model}_l${num_layers}_h${num_heads}_${epoch}.json" );
 
     # ── greedy-decode accuracy ─────────────────────────────────────────────
     my ($correct, $total) = (0, 0);

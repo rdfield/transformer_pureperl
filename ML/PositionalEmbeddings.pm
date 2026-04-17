@@ -70,7 +70,19 @@ sub new {
 sub backward {
    my $self = shift;
    my %args = @_;
-   $self->{gradient} = $args{next}->{gradient};
+   my $grad = $args{next}->{gradient};
+   if (defined($self->{dropout}) && defined($self->{dropout_mask})) {
+      $self->{gradient} = dclone($grad);
+      for my $b (0 .. $#$grad) {
+         for my $i (0 .. $#{$grad->[$b]}) {
+            for my $j (0 .. $#{$grad->[$b][$i]}) {
+               $self->{gradient}[$b][$i][$j] *= $self->{dropout_mask}[$b][$i][$j];
+            }
+         }
+      }
+   } else {
+      $self->{gradient} = $grad;
+   }
 }
 
 sub gradient {
@@ -90,11 +102,21 @@ sub forward {
    my $seq_len = scalar(@{$input->[0]});
    my $batch_embeddings = scalar(@{$input->[0][0]});
    my $output = [];
+   $self->{dropout_mask} = undef;
    foreach my $b (0 .. $batch_size - 1) {
       $output->[$b] = add_2_arrays($input->[$b], $self->{position_embeds}[0]);
-      foreach my $i (0 .. $seq_len - 1) {
-         foreach my $j (0 .. $self->{embeddings} - 1) {
-            $output->[$b][$i][$j] = 0 if rand() < $self->{dropout};
+      if (defined($self->{dropout})) {
+         my $scale = 1.0 / (1.0 - $self->{dropout});
+         foreach my $i (0 .. $seq_len - 1) {
+            foreach my $j (0 .. $self->{embeddings} - 1) {
+               if (rand() < $self->{dropout}) {
+                  $self->{dropout_mask}[$b][$i][$j] = 0;
+                  $output->[$b][$i][$j] = 0;
+               } else {
+                  $self->{dropout_mask}[$b][$i][$j] = $scale;
+                  $output->[$b][$i][$j] *= $scale;
+               }
+            }
          }
       }
    }

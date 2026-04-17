@@ -43,7 +43,7 @@ my $MAX_PAD_LEN = $MAX_LEN + 2;   # 5: SOS + up-to-3 content + EOS
 my $NUM_TRAIN   = 240;
 my $NUM_TEST    = 40;
 my $BATCH_SIZE  = 8;
-my $NUM_EPOCHS     = 150;
+my $NUM_EPOCHS     = 50;
 my $LR             = 0.001;  # Adam target lr; 0.01 overshoots MHA weights
 my $WARMUP_EPOCHS  = 5;      # linear ramp from LR/WARMUP_EPOCHS to LR over first 5 epochs
 

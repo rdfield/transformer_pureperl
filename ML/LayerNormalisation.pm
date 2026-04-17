@@ -1,6 +1,6 @@
 package ML::LayerNormalisation;
 use Modern::Perl;
-use ML::Util qw(print_2d_array adam_optimiser print_1d_array);
+use ML::Util qw(print_2d_array adam_optimiser print_1d_array clip_grad_norm);
 use Data::Dumper;
 use Storable qw(dclone);
 use Carp;
@@ -37,9 +37,11 @@ sub optimise {
    my %args = @_;
    my $lr    = $args{learning_rate} || 0.001;
    my $beta1 = 0.9;
-   my $beta2 = 0.999;
+   my $beta2 = 0.98;#99;
    my $eps   = 1e-8;
-   my $t     = $self->{adam_epoch};
+   my $t     = $self->{adam_step};
+   clip_grad_norm($self->{dgamma});
+   clip_grad_norm($self->{dbeta});
    foreach my $e (0 .. $self->{embeddings} - 1) {
       # Adam update for gamma
       $self->{m_gamma}[$e] = $beta1 * $self->{m_gamma}[$e] + (1 - $beta1) * $self->{dgamma}[$e];
@@ -56,7 +58,7 @@ sub optimise {
       $self->{beta}[$e] -= $lr * $m_hat / (sqrt($v_hat) + $eps);
       $self->{dbeta}[$e] = 0;
    }
-   $self->{adam_epoch}++;
+   $self->{adam_step}++;
    if ( $self->{debug} ) {
       say "gamma after update " . join(",", @{$self->{gamma}});
       say "beta after update "  . join(",", @{$self->{beta}});
@@ -167,7 +169,7 @@ sub initialise {
          $self->{v_gamma}[$c] = 0;
          $self->{v_beta}[$c]  = 0;
       }
-      $self->{adam_epoch} = 1;
+      $self->{adam_step} = 1;
       return;
    }
    $self->{gamma} = [];
@@ -180,7 +182,7 @@ sub initialise {
       $self->{v_gamma}[$c] = 0;
       $self->{v_beta}[$c]  = 0;
    }
-   $self->{adam_epoch} = 1;
+   $self->{adam_step} = 1;
 }
 
 sub forward {
@@ -189,7 +191,7 @@ sub forward {
    $self->{epoch} = $args{epoch} || 1;
    $self->{alpha} = 0.1;
    $self->{beta1} = 0.9;
-   $self->{beta2} = 0.999;
+   $self->{beta2} = 0.98;#99;
    my $X = $args{batch};
    if ($self->{debug} == 1) {
       say "LayerNormalisation input shape: " . join(", ", scalar(@{$X}), scalar(@{$X->[0]}), scalar(@{$X->[0][0]}));

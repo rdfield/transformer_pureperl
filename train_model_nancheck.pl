@@ -39,20 +39,11 @@ sub train_one_epoch {
       #print_2d_array("src_mask", $src_mask);
       my $tgt_mask = create_tgt_mask(tgt_ids => $decoder_input_ids, pad_id => $args{pad_id});
       my $encoder_output = $args{model}->encode(src => $src_ids, src_mask => $src_mask);
-      if (has_nan($encoder_output)) {
-         $args{model}->save_model(filename => "nan_dump_batch${batchno}.json");
-         die "NaN in encoder output at batch $batchno — weights saved to nan_dump_batch${batchno}.json\n";
-      }
+      die "NaN in encoder output at batch $batchno\n" if has_nan($encoder_output);
       my $decoder_output = $args{model}->decode(tgt => $decoder_input_ids, encoder_output => $encoder_output, src_mask => $src_mask, tgt_mask => $tgt_mask);
-      if (has_nan($decoder_output)) {
-         $args{model}->save_model(filename => "nan_dump_batch${batchno}.json");
-         die "NaN in decoder output at batch $batchno — weights saved to nan_dump_batch${batchno}.json\n";
-      }
+      die "NaN in decoder output at batch $batchno\n" if has_nan($decoder_output);
       my $final_output = $args{model}->project( batch =>  $decoder_output );
-      if (has_nan($final_output)) {
-         $args{model}->save_model(filename => "nan_dump_batch${batchno}.json");
-         die "NaN in projection at batch $batchno — weights saved to nan_dump_batch${batchno}.json\n";
-      }
+      die "NaN in projection at batch $batchno\n"     if has_nan($final_output);
       my $seq_len = scalar(@{$final_output->[0]});
       my $vocab_size = scalar(@{$final_output->[0][0]});
       my $resized_final_output = [];
@@ -197,7 +188,7 @@ my $num_heads = 4;#8
 my $dropout = 0.1;
 my $NUM_EPOCHS = 15;
 my $d_ff = 1024;#2048
-my $LEARNING_RATE  = 0.001;  # to match pytorch version - also try 0.0003: 0.01 definitely overshoots, looks like 0.001 isn't great either
+my $LEARNING_RATE  = 0.0001;  # to match pytorch version - also try 0.0003: 0.01 definitely overshoots, looks like 0.001 isn't great either
 my $WARMUP_EPOCHS  = 3;      # linear ramp from LR/3 to LR over first 3 epochs
 
 
@@ -298,20 +289,25 @@ foreach my $epoch (1 .. $NUM_EPOCHS) {
     say "-" x 50;
     say "End of Epoch $epoch | Time: ${epoch_duration}s | lr: $eff_lr | Avg Loss: $avg_epoch_loss";
     say "-" x 50;
-    $transformer_model->save_model( filename => "d${d_model}_l${num_layers}_h${num_heads}_${epoch}.json" );
-
-    # ── greedy-decode accuracy ─────────────────────────────────────────────
-    my ($correct, $total) = (0, 0);
-    for my $item (@$test_data) {
-        my $src_padded   = tokenize_pad($item->{src});
-        my @exp_content  = grep { $_ ne $SOS_TOKEN && $_ ne $EOS_TOKEN && $_ ne $PAD_TOKEN } @{$item->{tgt}};
-        my $pred_ids     = greedy_decode($transformer_model, $src_padded);
-        my @pred_content = map  { $id_to_token->{$_} }
-                           grep { $_ != $EOS_ID && $_ != $SOS_ID && $_ != $PAD_ID } @$pred_ids;
-        $correct++ if join(",", @pred_content) eq join(",", @exp_content);
-        $total++;
-    }
-    my $accuracy = 100.0 * $correct / $total;
-    printf "Accuracy: %d/%d = %.1f%%\n", $correct, $total, $accuracy;
+    $transformer_model->save_model( filename => "nancheck_d${d_model}_l${num_layers}_h${num_heads}_${epoch}.json" );
 }
+
+# ── greedy-decode accuracy ─────────────────────────────────────────────────
+say "=" x 50;
+say "--- Greedy Decode Accuracy (200 held-out examples) ---";
+my ($correct, $total) = (0, 0);
+for my $item (@$test_data) {
+    my $src_padded   = tokenize_pad($item->{src});
+    my @exp_content  = grep { $_ ne $SOS_TOKEN && $_ ne $EOS_TOKEN && $_ ne $PAD_TOKEN } @{$item->{tgt}};
+    my $pred_ids     = greedy_decode($transformer_model, $src_padded);
+    my @pred_content = map  { $id_to_token->{$_} }
+                       grep { $_ != $EOS_ID && $_ != $SOS_ID && $_ != $PAD_ID } @$pred_ids;
+    $correct++ if join(",", @pred_content) eq join(",", @exp_content);
+    $total++;
+}
+my $accuracy = 100.0 * $correct / $total;
+my $acc_pass = $accuracy >= 50;
+printf "Accuracy: %d/%d = %.1f%%  (pass >= 50%%): %s\n",
+    $correct, $total, $accuracy, $acc_pass ? "PASS" : "FAIL";
+say "=" x 50;
 
