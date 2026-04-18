@@ -371,7 +371,7 @@ sub new {
    $self->{epoch} = 1;
    $self->{alpha} = 0.001;
    $self->{beta1} = 0.9;
-   $self->{beta2} = 0.999;
+   $self->{beta2} = 0.98;
    my $input_size = $args{insize};
    my $outsize = $args{outsize};
    if (!defined($input_size) or $input_size !~ /^\d+$/ or $input_size > $input_limit) {

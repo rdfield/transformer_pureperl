@@ -112,7 +112,7 @@ sub train_one_epoch {
          }
          #print_2d_array("gradient $b", $gradient->[$b]);
       }
-      $args{model}->update( projection => 1, decode => 1, encode => 1, gradient => $gradient, learning_rate => $args{learning_rate}, max_norm => 5.0 );
+      $args{model}->update( projection => 1, decode => 1, encode => 1, gradient => $gradient, learning_rate => $args{learning_rate}, max_norm => 1e9 );
       $total_gnorm += $args{model}->{last_grad_norm} // 0;
 
 
@@ -201,7 +201,7 @@ my $num_heads = 4;#8
 my $dropout = 0.1;
 my $NUM_EPOCHS = 15;
 my $d_ff = 1024;#2048
-my $LEARNING_RATE  = 0.001;  # to match pytorch version - also try 0.0003: 0.01 definitely overshoots, looks like 0.001 isn't great either
+my $LEARNING_RATE  = 0.0001;  # matches PyTorch reference (part8g.py LEARNING_RATE = 1e-4)
 my $WARMUP_EPOCHS  = 3;      # linear ramp from LR/3 to LR over first 3 epochs
 my $MIN_LR         = $LEARNING_RATE * 0.1;  # cosine decay floor
 

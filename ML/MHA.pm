@@ -91,7 +91,7 @@ sub new {
       }
    }
    $self->{adam_beta1} = 0.9;
-   $self->{adam_beta2} = 0.999;
+   $self->{adam_beta2} = 0.98;
    $self->{adam_step} = 1;
 
    return bless $self, $class;

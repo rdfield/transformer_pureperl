@@ -42,7 +42,7 @@ sub optimise {
    my %args = @_;
    my $lr    = $args{learning_rate} || 0.001;
    my $beta1 = 0.9;
-   my $beta2 = 0.999;
+   my $beta2 = 0.98;
    my $eps   = 1e-8;
    my $t     = $self->{adam_step};
    foreach my $e (0 .. $self->{embeddings} - 1) {
