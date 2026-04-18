@@ -7,6 +7,11 @@ use ML::Util qw(print_2d_array mult_constant);
 use Storable qw(dclone);
 use Carp qw(cluck);
 
+sub get_grad_tensors {
+   my $self = shift;
+   return $self->{embedding}->get_grad_tensors();
+}
+
 sub optimise {
    my $self = shift;
    $self->{embedding}->optimise( @_ );

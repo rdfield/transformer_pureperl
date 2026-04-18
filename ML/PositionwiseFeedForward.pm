@@ -34,6 +34,11 @@ sub get_weights {
 }
    
        
+sub get_grad_tensors {
+   my $self = shift;
+   return [ @{$self->{l1}->get_grad_tensors()}, @{$self->{l2}->get_grad_tensors()} ];
+}
+
 sub optimise {
    my $self = shift;
    $self->{l1}->optimise( @_ );

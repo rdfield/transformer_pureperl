@@ -24,7 +24,8 @@ sub has_nan {
 sub train_one_epoch {
    my %args = @_;
 
-   my $total_loss = 0;
+   my $total_loss  = 0;
+   my $total_gnorm = 0;
    my $start_time = [ gettimeofday ];
    $args{dataloader}->init_iter(batch_size => $args{batch_size});
 
@@ -96,7 +97,8 @@ sub train_one_epoch {
       if (($batchno + 1) % 10 == 0) {
          my $batch_duration = sprintf("%.3f", tv_interval( $start_batch, [ gettimeofday ]));
          $start_batch = [ gettimeofday ];
-         my $batch_loss = "Loss: " . sprintf("%.3f", $total_loss / ($batchno + 1)) . " Batch: " . ($batchno+1) . "/" . $args{dataloader}->{batches} . " Elapsed: $batch_duration sec";
+         my $gnorm_so_far = sprintf("%.2f", $total_gnorm / ($batchno + 1));
+         my $batch_loss = "Loss: " . sprintf("%.3f", $total_loss / ($batchno + 1)) . " Batch: " . ($batchno+1) . "/" . $args{dataloader}->{batches} . " gnorm: $gnorm_so_far Elapsed: $batch_duration sec";
          say $batch_loss;
       }
       # resize the loss gradient to match the original final output
@@ -110,12 +112,14 @@ sub train_one_epoch {
          }
          #print_2d_array("gradient $b", $gradient->[$b]);
       }
-      $args{model}->update( projection => 1, decode => 1, encode => 1, gradient => $gradient, learning_rate => $args{learning_rate} );
+      $args{model}->update( projection => 1, decode => 1, encode => 1, gradient => $gradient, learning_rate => $args{learning_rate}, max_norm => 5.0 );
+      $total_gnorm += $args{model}->{last_grad_norm} // 0;
 
-      
+
    }
-   my $avg_loss = sprintf("%.3f", $total_loss / $args{dataloader}->{batches});
-   return $avg_loss;
+   my $avg_loss  = sprintf("%.3f", $total_loss  / $args{dataloader}->{batches});
+   my $avg_gnorm = sprintf("%.2f", $total_gnorm / $args{dataloader}->{batches});
+   return ($avg_loss, $avg_gnorm);
    
 }
     
@@ -199,6 +203,7 @@ my $NUM_EPOCHS = 15;
 my $d_ff = 1024;#2048
 my $LEARNING_RATE  = 0.001;  # to match pytorch version - also try 0.0003: 0.01 definitely overshoots, looks like 0.001 isn't great either
 my $WARMUP_EPOCHS  = 3;      # linear ramp from LR/3 to LR over first 3 epochs
+my $MIN_LR         = $LEARNING_RATE * 0.1;  # cosine decay floor
 
 
 # Example generation
@@ -250,10 +255,13 @@ my $transformer_model = ML::Transformer->new(
     projection_layer=>$projection
 );
 
-sub warmup_lr {
-    my ($epoch, $lr, $warmup) = @_;
+sub cosine_lr {
+    my ($epoch, $lr, $warmup, $total, $min_lr) = @_;
+    $min_lr //= $lr * 0.1;
     return $lr * $epoch / $warmup if $epoch <= $warmup;
-    return $lr;
+    my $pi       = 4 * atan2(1, 1);
+    my $progress = ($epoch - $warmup) / ($total - $warmup);
+    return $min_lr + 0.5 * ($lr - $min_lr) * (1 + cos($pi * $progress));
 }
 
 sub tokenize_pad {
@@ -292,11 +300,11 @@ my $train_dataset = ML::DataLoader->new(data => $raw_data, token_to_id => $token
 foreach my $epoch (1 .. $NUM_EPOCHS) {
     $train_dataset->init_iter( batch_size => $BATCH_SIZE );
     my $epoch_start_time = [ gettimeofday ];
-    my $eff_lr = warmup_lr($epoch, $LEARNING_RATE, $WARMUP_EPOCHS);
-    my $avg_epoch_loss = train_one_epoch(model => $transformer_model, dataloader => $train_dataset, loss_fn => "MSE", optimizer => "SGD", device => "CPU", pad_id => $PAD_ID, batch_size => $BATCH_SIZE, learning_rate => $eff_lr);
+    my $eff_lr = cosine_lr($epoch, $LEARNING_RATE, $WARMUP_EPOCHS, $NUM_EPOCHS, $MIN_LR);
+    my ($avg_epoch_loss, $avg_gnorm) = train_one_epoch(model => $transformer_model, dataloader => $train_dataset, loss_fn => "MSE", optimizer => "SGD", device => "CPU", pad_id => $PAD_ID, batch_size => $BATCH_SIZE, learning_rate => $eff_lr);
     my $epoch_duration = sprintf("%.3f", tv_interval( $epoch_start_time , [ gettimeofday ] ));
     say "-" x 50;
-    say "End of Epoch $epoch | Time: ${epoch_duration}s | lr: $eff_lr | Avg Loss: $avg_epoch_loss";
+    say "End of Epoch $epoch | Time: ${epoch_duration}s | lr: $eff_lr | Avg Loss: $avg_epoch_loss | Avg gnorm: $avg_gnorm";
     say "-" x 50;
     $transformer_model->save_model( filename => "d${d_model}_l${num_layers}_h${num_heads}_${epoch}.json" );
 

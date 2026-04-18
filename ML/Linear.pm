@@ -15,6 +15,11 @@ sub type {
    return "ML::Linear";
 }
 
+sub get_grad_tensors {
+   my $self = shift;
+   return [ grep { defined $_ } $self->{weights_grad}, $self->{bias_grad} ];
+}
+
 sub optimise {
    my $self = shift;
    my %args = @_;
@@ -24,7 +29,6 @@ sub optimise {
       print_2d_array( $self->name() . " bias gradient ",  $self->{bias_grad} );
       print_2d_array( $self->name() . " biases ",  $self->{biases} );
    }
-   clip_grad_norm($self->{bias_grad});
    adam_optimiser(  $self->{bias_grad} , $self->{m_biases} ,  $self->{v_biases} ,  $self->{biases} ,
                             $learning_rate, $self->{beta1}, $self->{beta2}, $self->{epoch} );
    if ( $self->{debug} ) {
@@ -37,7 +41,6 @@ sub optimise {
       print_2d_array($self->{name} .  "weights_grad " , $self->{weights_grad});
       print_2d_array($self->{name} .  "weights before " , $self->{W});
    }
-   clip_grad_norm($self->{weights_grad});
    adam_optimiser(  $self->{weights_grad} ,  $self->{m_W} ,  $self->{v_W} ,  $self->{W} ,
                             $learning_rate, $self->{beta1}, $self->{beta2}, $self->{epoch} );
    if ( $self->{debug} ) {

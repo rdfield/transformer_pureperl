@@ -15,6 +15,11 @@ sub type {
    return "ML::Embedding";
 }
 
+sub get_grad_tensors {
+   my $self = shift;
+   return [ $self->{dW} ];
+}
+
 sub optimise {
    my $self = shift;
    my %args = @_;
@@ -28,7 +33,6 @@ sub optimise {
          my $tok = $self->{input}[$b][$i];
          next if defined($self->{pad_id}) && $tok == $self->{pad_id};
          next if $updated{$tok}++;   # apply dW[tok] exactly once per step
-         clip_grad_norm($self->{dW}[$tok]);
          foreach my $j (0 .. $self->{embeddings} - 1) {
             $self->{m_W}[$tok][$j] = $beta1 * $self->{m_W}[$tok][$j] + (1 - $beta1) * $self->{dW}[$tok][$j];
             $self->{v_W}[$tok][$j] = $beta2 * $self->{v_W}[$tok][$j] + (1 - $beta2) * $self->{dW}[$tok][$j] ** 2;

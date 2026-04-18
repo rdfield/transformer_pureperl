@@ -18,6 +18,11 @@ sub initialise {
    $self->{ln_layer}->initialise();
 }
 
+sub get_grad_tensors {
+   my $self = shift;
+   return [ map { @{$_->get_grad_tensors()} } @{$self->{residual_connections}} ];
+}
+
 sub optimise {
    my $self = shift;
    $self->{residual_connections}[0]->optimise( @_ );

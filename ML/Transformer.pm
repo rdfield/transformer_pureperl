@@ -1,6 +1,7 @@
 use Modern::Perl;
 package ML::Transformer;
 use ML::LossGradient;
+use ML::Util qw(global_clip_grad_norm);
 use Storable qw(dclone);
 use Data::Dumper;
 use JSON;
@@ -67,6 +68,10 @@ sub update {
       $self->{src_embed}->backward( next => $self->{src_pos} );
       $next = $self->{src_embed};
    }
+   if (defined $args{max_norm}) {
+      my $tensors = $self->collect_grad_tensors( %args );
+      $self->{last_grad_norm} = global_clip_grad_norm($tensors, $args{max_norm});
+   }
    if ($args{projection}) {
       $self->{projection_layer}->optimise( learning_rate => $args{learning_rate} );
    }
@@ -83,6 +88,18 @@ sub update {
    
 }
       
+sub collect_grad_tensors {
+   my $self = shift;
+   my %args = @_;
+   my @t;
+   push @t, @{$self->{projection_layer}->get_grad_tensors()} if $args{projection};
+   push @t, @{$self->{decoder}->get_grad_tensors()},
+            @{$self->{tgt_embed}->get_grad_tensors()}         if $args{decode};
+   push @t, @{$self->{encoder}->get_grad_tensors()},
+            @{$self->{src_embed}->get_grad_tensors()}         if $args{encode};
+   return \@t;
+}
+
 sub save_model {
    my $self = shift;
    my %args = @_;
