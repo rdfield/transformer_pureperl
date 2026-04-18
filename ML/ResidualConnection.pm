@@ -21,6 +21,13 @@ sub initialise {
    $self->{ln_layer}->initialise();
 }
 
+sub get_grad_tensors {
+   my $self = shift;
+   my @t = @{$self->{ln_layer}->get_grad_tensors()};
+   push @t, @{$self->{sublayer}->get_grad_tensors()} if defined $self->{sublayer};
+   return \@t;
+}
+
 sub optimise {
    my $self = shift;
    $self->{sublayer}->optimise( @_ );

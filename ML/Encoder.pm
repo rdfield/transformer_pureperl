@@ -22,6 +22,12 @@ sub initialise {
    $self->{ln_layer}->initialise();
 }
 
+sub get_grad_tensors {
+   my $self = shift;
+   return [ (map { @{$_->get_grad_tensors()} } @{$self->{EncoderBlocks}}),
+            @{$self->{norm}->get_grad_tensors()} ];
+}
+
 sub optimise {
    my $self = shift;
    foreach my $l (0 .. $self->{layers} - 1) {

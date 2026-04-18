@@ -2,16 +2,16 @@ use Modern::Perl;
 package ML::Util;
 use Data::Dumper;
 use Exporter 'import';
+use Storable qw(dclone);
 our @EXPORT_OK = qw(print_2d_array transpose add_2_arrays mult_2_arrays diagonal_matrix matmul
                     print_1d_array rotate_matrix_180 conv2d linear add_constant div_constant
                     adam_optimiser softmax scaled_dot_product_attention mult_constant randn
                     create_src_mask create_tgt_mask tokenize_sequence pad_sequence
-                    clip_grad_norm);
+                    clip_grad_norm global_clip_grad_norm);
 
 use Carp qw(croak confess);
 use Math::Random::OO::Normal;
 my $prng = Math::Random::OO::Normal->new();
-
 
 my $eps = 1e-08;
 
@@ -33,6 +33,32 @@ sub clip_grad_norm {
    } else {
       $_ *= $scale for @$data;
    }
+}
+
+sub global_clip_grad_norm {
+   my ($tensors, $max_norm) = @_;
+   $max_norm //= 1.0;
+   my $global_sq = 0;
+   for my $t (@$tensors) {
+      next unless defined $t;
+      if (ref($t->[0]) eq 'ARRAY') {
+         for my $row (@$t) { $global_sq += $_ * $_ for @$row; }
+      } else {
+         $global_sq += $_ * $_ for @$t;
+      }
+   }
+   my $global_norm = sqrt($global_sq);
+   return $global_norm if $global_norm <= $max_norm;
+   my $scale = $max_norm / $global_norm;
+   for my $t (@$tensors) {
+      next unless defined $t;
+      if (ref($t->[0]) eq 'ARRAY') {
+         for my $row (@$t) { $_ *= $scale for @$row; }
+      } else {
+         $_ *= $scale for @$t;
+      }
+   }
+   return $global_norm;
 }
 
 sub adam_optimiser {
@@ -548,20 +574,24 @@ sub scaled_dot_product_attention {
       }
    }
 
-   if (defined($dropout)) {
+   # Save pre-dropout softmax weights for backward pass (softmax Jacobian requires them).
+   my $softmax_weights = dclone($attention_weights);
+   my $dropout_mask;
+   if (defined($dropout) && $dropout > 0) {
       my $scale = 1.0 / (1.0 - $dropout);
       foreach my $i (0 .. $#$query) {
          foreach my $j (0 .. $#{$query->[0]}) {
             foreach my $x (0 .. $#{$attention_weights->[0][0]}) {
                foreach my $y (0 .. $#{$attention_weights->[0][0][0]}) {
                   if (rand() < $dropout) {
+                     $dropout_mask->[$i][$j][$x][$y] = 0;
                      $attention_weights->[$i][$j][$x][$y] = 0;
                   } else {
+                     $dropout_mask->[$i][$j][$x][$y] = $scale;
                      $attention_weights->[$i][$j][$x][$y] *= $scale;
                   }
                }
             }
-            #print_2d_array("attention_weights after drop out $i $j", $attention_weights->[$i][$j]);
          }
       }
    }
@@ -569,11 +599,11 @@ sub scaled_dot_product_attention {
    foreach my $i (0 .. $#$query) {
       foreach my $j (0 .. $#{$query->[0]}) {
          $output->[$i][$j] = matmul($attention_weights->[$i][$j], $value->[$i][$j]);
-#print_2d_array("self attention output $i $j", $output->[$i][$j]);
       }
    }
 
-   return $output, $attention_weights;
+   # Returns: output, post-dropout weights (for dV backward), pre-dropout softmax (for Jacobian), dropout mask
+   return $output, $attention_weights, $softmax_weights, $dropout_mask;
 
 }
 

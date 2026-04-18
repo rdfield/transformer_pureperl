@@ -170,7 +170,7 @@ sub forward {
       }
    }
    say "resized Q, V, K  shape: " . join(", ", $batch_size, $self->{num_heads}, $self->{seq_len}, $self->{d_k}) if $self->{debug};
-   my ($output, $attention_weights) = scaled_dot_product_attention($self->{resized_Q}, $self->{resized_K}, $self->{resized_V}, $args{mask}, $self->{dropout});
+   my ($output, $attention_weights, $softmax_weights, $dropout_mask) = scaled_dot_product_attention($self->{resized_Q}, $self->{resized_K}, $self->{resized_V}, $args{mask}, $self->{dropout});
    if ($self->{debug}) {
       say "output shape = " . join(", ", scalar(@$output), scalar(@{$output->[0]}), scalar(@{$output->[0][0]}), scalar(@{$output->[0][0][0]}));
       foreach my $b (0 .. $batch_size - 1) {
@@ -201,7 +201,9 @@ sub forward {
    }
    say "output shape after linear= " . join(", ", scalar(@$output), scalar(@{$output->[0]}), scalar(@{$output->[0][0]})) if $self->{debug};
    say "attention_weights shape = " . join(", ", scalar(@$attention_weights), scalar(@{$attention_weights->[0]}), scalar(@{$attention_weights->[0][0]}), scalar(@{$attention_weights->[0][0][0]})) if $self->{debug};
-   $self->{attention_weights} = dclone($attention_weights);
+   $self->{attention_weights}      = dclone($attention_weights);  # post-dropout, used in backward for dV
+   $self->{softmax_weights}        = dclone($softmax_weights);    # pre-dropout, used in backward for Jacobian
+   $self->{attention_dropout_mask} = $dropout_mask;               # undef when dropout=0
    return $output;
 }
 
@@ -283,19 +285,38 @@ sub backward {
          }
       }
    }    
-   my $dA = []; # batch x heads x seqlen x seqlen
+   my $dA = []; # batch x heads x seqlen x seqlen — gradient w.r.t. post-dropout attention weights
    foreach my $b (0 .. $self->{batch_size} - 1) {
       foreach my $n (0 .. $self->{num_heads} - 1) {
          $dA->[$b][$n] = matmul($d_out_heads->[$b][$n], transpose($self->{resized_V}->[$b][$n]));
       }
-   }    
-   
+   }
+
+   # Backprop through attention dropout: re-apply the forward mask to dA to get
+   # the gradient w.r.t. the pre-dropout softmax output.
+   my $dA_soft;
+   if (defined($self->{attention_dropout_mask})) {
+      for my $b (0 .. $self->{batch_size} - 1) {
+         for my $n (0 .. $self->{num_heads} - 1) {
+            for my $x (0 .. $self->{seq_len} - 1) {
+               for my $y (0 .. $self->{seq_len} - 1) {
+                  $dA_soft->[$b][$n][$x][$y] = $dA->[$b][$n][$x][$y] * $self->{attention_dropout_mask}->[$b][$n][$x][$y];
+               }
+            }
+         }
+      }
+   } else {
+      $dA_soft = $dA;
+   }
+
    my $d_score_factor = sqrt( $self->{d_k} );
 
+   # Softmax Jacobian: A_soft * (dA_soft - rowsum(A_soft * dA_soft))
+   # Must use pre-dropout softmax_weights, not post-dropout attention_weights.
    my $AdA = [];
    foreach my $b (0 .. $self->{batch_size} - 1) {
       foreach my $n (0 .. $self->{num_heads} - 1) {
-         my $I = mult_2_arrays($dA->[$b][$n], $self->{attention_weights}->[$b][$n]);
+         my $I = mult_2_arrays($dA_soft->[$b][$n], $self->{softmax_weights}->[$b][$n]);
          # need to sum each row
          foreach my $s (0 .. $self->{seq_len} - 1) {
             $AdA->[$b][$n][$s][0] = 0;
@@ -311,7 +332,7 @@ sub backward {
       foreach my $n (0 .. $self->{num_heads} - 1) {
          foreach my $s (0 .. $self->{seq_len} - 1) {
             foreach my $s2 (0 .. $self->{seq_len} - 1) {
-               $d_scores->[$b][$n][$s][$s2] = ( $self->{attention_weights}->[$b][$n][$s][$s2] * ( $dA->[$b][$n][$s][$s2] - $AdA->[$b][$n][$s][0] ) ) / $d_score_factor;
+               $d_scores->[$b][$n][$s][$s2] = ( $self->{softmax_weights}->[$b][$n][$s][$s2] * ( $dA_soft->[$b][$n][$s][$s2] - $AdA->[$b][$n][$s][0] ) ) / $d_score_factor;
             }
          }
          print_2d_array("d_scores $b $n", $d_scores->[$b][$n]) if $self->{debug};
@@ -431,15 +452,16 @@ sub gradient_kv {
    return $self->{gradient_kv};
 }
 
+sub get_grad_tensors {
+   my $self = shift;
+   return [ $self->{dWq}, $self->{dWk}, $self->{dWv}, $self->{dWo} ];
+}
+
 sub optimise {
    my $self = shift;
    my %args = @_;
    my $lr = $args{learning_rate} || 0.001;
    my $t  = $self->{adam_step};
-   clip_grad_norm($self->{dWo});
-   clip_grad_norm($self->{dWq});
-   clip_grad_norm($self->{dWk});
-   clip_grad_norm($self->{dWv});
    adam_optimiser($self->{dWo}, $self->{m_W_o}, $self->{v_W_o}, $self->{W_o}, $lr, $self->{adam_beta1}, $self->{adam_beta2}, $t);
    adam_optimiser($self->{dWq}, $self->{m_W_q}, $self->{v_W_q}, $self->{W_q}, $lr, $self->{adam_beta1}, $self->{adam_beta2}, $t);
    adam_optimiser($self->{dWk}, $self->{m_W_k}, $self->{v_W_k}, $self->{W_k}, $lr, $self->{adam_beta1}, $self->{adam_beta2}, $t);

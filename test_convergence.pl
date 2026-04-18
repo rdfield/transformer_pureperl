@@ -46,6 +46,7 @@ my $BATCH_SIZE  = 8;
 my $NUM_EPOCHS     = 50;
 my $LR             = 0.001;  # Adam target lr; 0.01 overshoots MHA weights
 my $WARMUP_EPOCHS  = 5;      # linear ramp from LR/WARMUP_EPOCHS to LR over first 5 epochs
+my $MIN_LR         = $LR * 0.1;             # cosine decay floor
 
 my $LOSS_PASS_RATIO   = 0.85;   # final loss must be < this fraction of epoch-1 loss
                                 # (MHA now uses Adam; observed ratio ~0.79 at 50 epochs)
@@ -86,16 +87,20 @@ sub build_model {
 }
 
 # ── training loop ─────────────────────────────────────────────────────────────
-sub warmup_lr {
-    my ($epoch, $lr, $warmup) = @_;
+sub cosine_lr {
+    my ($epoch, $lr, $warmup, $total, $min_lr) = @_;
+    $min_lr //= $lr * 0.1;
     return $lr * $epoch / $warmup if $epoch <= $warmup;
-    return $lr;
+    my $pi       = 4 * atan2(1, 1);
+    my $progress = ($epoch - $warmup) / ($total - $warmup);
+    return $min_lr + 0.5 * ($lr - $min_lr) * (1 + cos($pi * $progress));
 }
 
 sub train_epoch {
     my ($model, $loader, $lr) = @_;
     $loader->init_iter(batch_size => $BATCH_SIZE);
-    my $total = 0;
+    my $total       = 0;
+    my $total_gnorm = 0;
     for my $bn (0 .. $loader->{batches} - 1) {
         my $batch         = $loader->next_batch();
         my $src_ids       = $batch->{src_ids};
@@ -155,9 +160,10 @@ sub train_epoch {
             }
         }
         $model->update(projection => 1, decode => 1, encode => 1,
-                       gradient => $grad, learning_rate => $lr);
+                       gradient => $grad, learning_rate => $lr, max_norm => 1.0);
+        $total_gnorm += $model->{last_grad_norm} // 0;
     }
-    return $total / $loader->{batches};
+    return ($total / $loader->{batches}, $total_gnorm / $loader->{batches});
 }
 
 sub tokenize_pad {
@@ -205,12 +211,12 @@ my ($first_loss, $last_loss);
 
 for my $epoch (1 .. $NUM_EPOCHS) {
     my $t0       = [gettimeofday];
-    my $eff_lr   = warmup_lr($epoch, $LR, $WARMUP_EPOCHS);
-    my $avg_loss = train_epoch($model, $loader, $eff_lr);
+    my $eff_lr   = cosine_lr($epoch, $LR, $WARMUP_EPOCHS, $NUM_EPOCHS, $MIN_LR);
+    my ($avg_loss, $avg_gnorm) = train_epoch($model, $loader, $eff_lr);
     my $elapsed  = sprintf "%.1f", tv_interval($t0, [gettimeofday]);
     $first_loss //= $avg_loss;
     $last_loss    = $avg_loss;
-    printf "Epoch %3d | loss %.4f | lr %.5f | %.1fs\n", $epoch, $avg_loss, $eff_lr, $elapsed;
+    printf "Epoch %3d | loss %.4f | lr %.5f | gnorm %.2f | %.1fs\n", $epoch, $avg_loss, $eff_lr, $avg_gnorm, $elapsed;
 }
 
 # ── convergence check ─────────────────────────────────────────────────────────
