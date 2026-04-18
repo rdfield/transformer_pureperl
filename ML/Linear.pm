@@ -281,10 +281,6 @@ sub forward {
 # this is optimised for Transformer models, so may not work with CNN
    my $self = shift;
    my %args = @_;
-   $self->{alpha} = 0.1;
-   $self->{beta1} = 0.9;
-   $self->{beta2} = 0.98;#99;
-
    my $batch = $args{batch};
 if (ref($batch) eq "") {
    die "ML::Linear forward input batch not defined, called by " . join(", ", caller());
@@ -373,6 +369,9 @@ sub new {
    }
    $self->{debug} = $debug;
    $self->{epoch} = 1;
+   $self->{alpha} = 0.001;
+   $self->{beta1} = 0.9;
+   $self->{beta2} = 0.999;
    my $input_size = $args{insize};
    my $outsize = $args{outsize};
    if (!defined($input_size) or $input_size !~ /^\d+$/ or $input_size > $input_limit) {
