@@ -4,7 +4,7 @@ use Modern::Perl;
 use Cwd qw(abs_path);
 use Math::Random qw(random_uniform);
 use Math::Random::OO::Normal;
-use ML::Util qw(print_2d_array print_1d_array add_2_arrays matmul linear transpose adam_optimiser clip_grad_norm);
+use ML::Util qw(print_2d_array print_1d_array add_2_arrays matmul linear transpose adam_optimiser clip_grad_norm xavier_uniform);
 use Storable qw(dclone);
 use Carp qw(confess);
 use Data::Dumper;
@@ -239,11 +239,10 @@ sub initialise_weights {
       $self->{v_biases}[$b][0] = 0;
    }
 
-   $self->{W} = [];
-   my $prng = Math::Random::OO::Normal->new(0, sqrt(2 /  $self->{insize}));
+   # Xavier-uniform init (matches PyTorch nn.init.xavier_uniform_)
+   $self->{W} = xavier_uniform($self->{insize}, $self->{outsize});
    foreach my $row ( 0 .. $self->{insize} - 1) {
       foreach my $col ( 0 .. $self->{outsize} - 1) {
-         $self->{W}[$row][$col] = $prng->next();
          $self->{m_W}[$row][$col] = 0;
          $self->{v_W}[$row][$col] = 0;
       }

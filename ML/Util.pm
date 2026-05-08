@@ -7,7 +7,7 @@ our @EXPORT_OK = qw(print_2d_array transpose add_2_arrays mult_2_arrays diagonal
                     print_1d_array rotate_matrix_180 conv2d linear add_constant div_constant
                     adam_optimiser softmax scaled_dot_product_attention mult_constant randn
                     create_src_mask create_tgt_mask tokenize_sequence pad_sequence
-                    clip_grad_norm global_clip_grad_norm);
+                    clip_grad_norm global_clip_grad_norm xavier_uniform);
 
 use Carp qw(croak confess);
 use Math::Random::OO::Normal;
@@ -39,13 +39,24 @@ sub global_clip_grad_norm {
    my ($tensors, $max_norm) = @_;
    $max_norm //= 1.0;
    my $global_sq = 0;
+   my $idx = 0;
    for my $t (@$tensors) {
       next unless defined $t;
+      my $tsq = 0;
       if (ref($t->[0]) eq 'ARRAY') {
-         for my $row (@$t) { $global_sq += $_ * $_ for @$row; }
+         for my $row (@$t) { $tsq += $_ * $_ for @$row; }
       } else {
-         $global_sq += $_ * $_ for @$t;
+         $tsq += $_ * $_ for @$t;
       }
+      if ($ENV{GRAD_PROBE}) {
+         my @dims;
+         my $p = $t;
+         while (ref($p) eq 'ARRAY') { push @dims, scalar(@$p); $p = $p->[0]; }
+         printf "    [grad_probe] tensor %3d  norm=%.4e  shape=%s\n",
+                $idx, sqrt($tsq), join("x", @dims);
+      }
+      $idx++;
+      $global_sq += $tsq;
    }
    my $global_norm = sqrt($global_sq);
    return $global_norm if $global_norm <= $max_norm;
@@ -616,6 +627,21 @@ sub randn {
       }
    }
    return $O;
+}
+
+# Xavier/Glorot uniform init: matches PyTorch's nn.init.xavier_uniform_
+# Draws from U(-bound, +bound) where bound = sqrt(6 / (fan_in + fan_out)).
+# Uses Perl's built-in rand() so srand() makes init reproducible.
+sub xavier_uniform {
+   my ($fan_in, $fan_out) = @_;
+   my $bound = sqrt(6.0 / ($fan_in + $fan_out));
+   my $W = [];
+   for my $i (0 .. $fan_in - 1) {
+      for my $j (0 .. $fan_out - 1) {
+         $W->[$i][$j] = -$bound + 2 * $bound * rand();
+      }
+   }
+   return $W;
 }
 
 sub create_src_mask {

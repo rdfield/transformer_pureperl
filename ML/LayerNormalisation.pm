@@ -116,6 +116,7 @@ sub backward {
             $sum_delta_gamma      += $delta->[$b][$s][$e] * $self->{gamma}[$e];
             $sum_delta_gamma_xhat += $delta->[$b][$s][$e] * $self->{gamma}[$e] * $x_hat;
          }
+
          my $mean_delta_gamma      = $sum_delta_gamma      / $self->{embeddings};
          my $mean_delta_gamma_xhat = $sum_delta_gamma_xhat / $self->{embeddings};
          foreach my $e (0 .. $self->{embeddings} - 1) {
@@ -127,7 +128,7 @@ sub backward {
          }
       }
       if ($self->{debug}) {
-         print_2d_array("LayerNorm gradient $b", $self->{gradient}[$b]) if $self->{debug};
+         print_2d_array("LayerNorm gradient $b", $self->{gradient}[$b]);
       }
    }
 }

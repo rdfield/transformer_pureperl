@@ -1,5 +1,6 @@
 use Modern::Perl;
 use lib '.';
+srand(42);   # reproducible Xavier-uniform init for run-to-run comparison
 use ML::Transformer;
 use ML::InputEmbeddings;
 use ML::PositionalEmbeddings;
@@ -114,7 +115,6 @@ sub train_one_epoch {
       }
       $args{model}->update( projection => 1, decode => 1, encode => 1, gradient => $gradient, learning_rate => $args{learning_rate}, max_norm => 1e9 );
       $total_gnorm += $args{model}->{last_grad_norm} // 0;
-
 
    }
    my $avg_loss  = sprintf("%.3f", $total_loss  / $args{dataloader}->{batches});
@@ -242,6 +242,10 @@ my $decoder = ML::Decoder->new( embeddings => $d_model,
 
 # Projection Layer
 my $projection = ML::Linear->new(insize => $d_model, outsize => $tgt_vocab_size);
+$main::projection_ref = $projection;
+$main::decoder_ref    = $decoder;
+$main::encoder_ref    = $encoder;
+
 $projection->set_weights_and_biases();
 
 # --- Instantiate the Full Transformer ---

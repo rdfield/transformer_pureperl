@@ -4,7 +4,7 @@ use lib '/home/mvine/imagenet';
 use Modern::Perl;
 use Math::Random qw(random_uniform);
 use Math::Random::OO::Normal;
-use ML::Util qw(print_2d_array print_1d_array add_2_arrays matmul linear transpose adam_optimiser clip_grad_norm);
+use ML::Util qw(print_2d_array print_1d_array add_2_arrays matmul linear transpose adam_optimiser clip_grad_norm xavier_uniform);
 use Storable qw(dclone);
 use Data::Dumper;
 use Carp qw(cluck);
@@ -91,15 +91,13 @@ sub parameter_count {
 
 sub initialise_weights {
    my $self = shift;
-   $self->{W} = [];
+   # Xavier-uniform init (matches PyTorch nn.init.xavier_uniform_).
+   # Bounded init avoids long-tail outliers that destabilise training.
+   $self->{W} = xavier_uniform($self->{vocab_size}, $self->{embeddings});
    $self->{m_W} = [];
    $self->{v_W} = [];
-   # N(0, 1/sqrt(d_model)) so that after InputEmbeddings' sqrt(d_model) multiplier,
-   # output has std ~1, matching the scale of sinusoidal positional embeddings.
-   my $prng = Math::Random::OO::Normal->new(0, 1.0 / sqrt($self->{embeddings}));
    foreach my $row ( 0 .. $self->{vocab_size} - 1) {
       foreach my $col ( 0 .. $self->{embeddings} - 1) {
-         $self->{W}[$row][$col]   = $prng->next();
          $self->{m_W}[$row][$col] = 0;
          $self->{v_W}[$row][$col] = 0;
       }

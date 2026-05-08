@@ -1,7 +1,7 @@
 package ML::MHA;
 use Modern::Perl;
 use ML::Linear;
-use ML::Util qw(print_2d_array scaled_dot_product_attention add_2_arrays randn matmul transpose mult_2_arrays adam_optimiser clip_grad_norm);
+use ML::Util qw(print_2d_array scaled_dot_product_attention add_2_arrays randn matmul transpose mult_2_arrays adam_optimiser clip_grad_norm xavier_uniform);
 use Storable qw(dclone);
 use Carp qw(confess);
 
@@ -58,22 +58,13 @@ sub new {
    }
    $self->{dropout} = $dropout;
 
-# switch these from Linear to arrays, embeddings x embeddings, otherwise the backprop doesn't work
-# Xavier init: scale N(0,1) by 1/sqrt(fan_in) so pre-softmax scores have unit-ish variance
-   my $xscale = 1.0 / sqrt($self->{embeddings});
-   my $xavier = sub {
-      my $W = randn($self->{embeddings}, $self->{embeddings});
-      for my $i (0 .. $#$W) {
-         for my $j (0 .. $#{$W->[0]}) {
-            $W->[$i][$j] *= $xscale;
-         }
-      }
-      return $W;
-   };
-   $self->{W_q} = defined($args{W_q})?dclone($args{W_q}):$xavier->();
-   $self->{W_v} = defined($args{W_v})?dclone($args{W_v}):$xavier->();
-   $self->{W_k} = defined($args{W_k})?dclone($args{W_k}):$xavier->();
-   $self->{W_o} = defined($args{W_o})?dclone($args{W_o}):$xavier->();
+# Xavier-uniform init (matches PyTorch nn.init.xavier_uniform_)
+# Bounded init avoids long-tail outliers from Gaussian sampling that destabilise training.
+   my $e = $self->{embeddings};
+   $self->{W_q} = defined($args{W_q})?dclone($args{W_q}):xavier_uniform($e, $e);
+   $self->{W_v} = defined($args{W_v})?dclone($args{W_v}):xavier_uniform($e, $e);
+   $self->{W_k} = defined($args{W_k})?dclone($args{W_k}):xavier_uniform($e, $e);
+   $self->{W_o} = defined($args{W_o})?dclone($args{W_o}):xavier_uniform($e, $e);
    
 
    $self->{d_k} = int( $self->{embeddings} / $num_heads);
@@ -83,7 +74,6 @@ sub new {
    }
 
    # Adam optimiser state (first and second moment estimates for each weight matrix)
-   my $e = $self->{embeddings};
    for my $key (qw(m_W_q v_W_q m_W_k v_W_k m_W_v v_W_v m_W_o v_W_o)) {
       $self->{$key} = [];
       for my $i (0 .. $e - 1) {
@@ -204,6 +194,25 @@ sub forward {
    $self->{attention_weights}      = dclone($attention_weights);  # post-dropout, used in backward for dV
    $self->{softmax_weights}        = dclone($softmax_weights);    # pre-dropout, used in backward for Jacobian
    $self->{attention_dropout_mask} = $dropout_mask;               # undef when dropout=0
+   if ($ENV{GRAD_PROBE}) {
+      my $fro4 = sub {
+         my $t = shift; my $sq = 0;
+         for my $b (@$t) { for my $h (@$b) { for my $r (@$h) { $sq += $_*$_ for @$r } } }
+         return sqrt($sq);
+      };
+      my $fro3 = sub {
+         my $t = shift; my $sq = 0;
+         for my $b (@$t) { for my $r (@$b) { $sq += $_*$_ for @$r } }
+         return sqrt($sq);
+      };
+      my $smax = 0;
+      my $scoremax = 0;
+      for my $b (@$attention_weights) { for my $h (@$b) { for my $r (@$h) { for my $v (@$r) { $smax = $v if $v > $smax } } } }
+      printf "    [mha_fwd %s] cross=%d  |input|=%.3e  |Q|=%.3e  |K|=%.3e  |V|=%.3e  swmax=%.3f\n",
+             $self->{name}, $self->{is_cross_attention},
+             $fro3->($self->{input}), $fro4->($self->{resized_Q}),
+             $fro4->($self->{resized_K}), $fro4->($self->{resized_V}), $smax;
+   }
    return $output;
 }
 
@@ -440,6 +449,20 @@ sub backward {
    }
    $self->{gradient}    = dclone($dX);
    $self->{gradient_kv} = dclone($dX_kv);
+   if ($ENV{GRAD_PROBE}) {
+      my $fro2 = sub { my $t = shift; my $sq = 0; for my $r (@$t) { $sq += $_*$_ for @$r } sqrt($sq) };
+      my $fro3 = sub { my $t = shift; my $sq = 0; for my $b (@$t) { for my $r (@$b) { $sq += $_*$_ for @$r } } sqrt($sq) };
+      my $fro4 = sub { my $t = shift; my $sq = 0; for my $b (@$t) { for my $h (@$b) { for my $r (@$h) { $sq += $_*$_ for @$r } } } sqrt($sq) };
+      printf "    [mha_bwd %s cross=%d] |input|=%.3e  |input_kv|=%.3e  |Q|=%.3e  |K|=%.3e  |V|=%.3e\n",
+             $self->{name}, $self->{is_cross_attention},
+             $fro3->($self->{input}), $fro3->($self->{input_kv}),
+             $fro4->($self->{resized_Q}), $fro4->($self->{resized_K}), $fro4->($self->{resized_V});
+      printf "    [mha_bwd %s] |in_grad|=%.3e  |d_concat|=%.3e  |dA|=%.3e  |d_scores|=%.3e  |dQ|=%.3e  |dK|=%.3e  |dV|=%.3e\n",
+             $self->{name}, $fro3->($in_grad), $fro3->($self->{d_concat}),
+             $fro4->($dA), $fro4->($d_scores), $fro3->($dQ), $fro3->($dK), $fro3->($dV);
+      printf "    [mha_bwd %s] |dWq|=%.3e  |dWk|=%.3e  |dWv|=%.3e  |dWo|=%.3e\n",
+             $self->{name}, $fro2->($self->{dWq}), $fro2->($self->{dWk}), $fro2->($self->{dWv}), $fro2->($self->{dWo});
+   }
 }
 
 sub gradient {
