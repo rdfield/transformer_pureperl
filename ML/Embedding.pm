@@ -195,9 +195,10 @@ sub new {
       die "Invalid embeddings parameter '$embeddings', must be integer ";
    }
    $self->{embeddings} = $embeddings;
+   $self->{pad_id}     = $args{pad_id};   # optional; if defined, optimise() skips PAD row updates
    $self->{outsize} = $args{vocab_size} * $args{embeddings};
    say "ML::Embedding maximum outsize = " . $self->{outsize}  if $self->{debug};
    return bless $self, $class;
-}  
+}
 
 1;
