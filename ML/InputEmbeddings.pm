@@ -33,7 +33,12 @@ sub new {
    my $self = {};
    $self->{embeddings} = $args{embeddings};
    $self->{vocab_size} = $args{vocab_size};
-   $self->{embedding} = ML::Embedding->new(vocab_size => $self->{vocab_size}, embeddings => $self->{embeddings});
+   $self->{pad_id}     = $args{pad_id};
+   $self->{embedding} = ML::Embedding->new(
+       vocab_size => $self->{vocab_size},
+       embeddings => $self->{embeddings},
+       pad_id     => $self->{pad_id},
+   );
    $self->{embedding}->set_weights( weights => $args{weights} );
    return bless $self, $class;
 }

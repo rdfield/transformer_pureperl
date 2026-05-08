@@ -68,8 +68,8 @@ sub gen_copy_data {
 # ── model construction ────────────────────────────────────────────────────────
 sub build_model {
     srand(1);
-    my $se = ML::InputEmbeddings->new(embeddings => $D_MODEL, vocab_size => $VOCAB_SIZE);
-    my $te = ML::InputEmbeddings->new(embeddings => $D_MODEL, vocab_size => $VOCAB_SIZE);
+    my $se = ML::InputEmbeddings->new(embeddings => $D_MODEL, vocab_size => $VOCAB_SIZE, pad_id => $PAD_ID);
+    my $te = ML::InputEmbeddings->new(embeddings => $D_MODEL, vocab_size => $VOCAB_SIZE, pad_id => $PAD_ID);
     my $sp = ML::PositionalEmbeddings->new(embeddings => $D_MODEL, max_seq_length => $MAX_PAD_LEN, dropout => $DROPOUT);
     my $tp = ML::PositionalEmbeddings->new(embeddings => $D_MODEL, max_seq_length => $MAX_PAD_LEN, dropout => $DROPOUT);
     my $enc = ML::Encoder->new(embeddings => $D_MODEL, layers => $NUM_LAYERS,

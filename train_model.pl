@@ -219,8 +219,8 @@ my $MAX_PADDED_LEN = $MAX_SEQ_LEN + 2; # +2 for SOS and EOS
 
 my $max_seq_len = $MAX_PADDED_LEN;#100; # Max sequence length for positional encoding
 
-my $src_embed = ML::InputEmbeddings->new(embeddings => $d_model, vocab_size => $src_vocab_size);
-my $tgt_embed = ML::InputEmbeddings->new(embeddings => $d_model, vocab_size => $tgt_vocab_size);
+my $src_embed = ML::InputEmbeddings->new(embeddings => $d_model, vocab_size => $src_vocab_size, pad_id => $PAD_ID);
+my $tgt_embed = ML::InputEmbeddings->new(embeddings => $d_model, vocab_size => $tgt_vocab_size, pad_id => $PAD_ID);
 
 my $src_pos = ML::PositionalEmbeddings->new(embeddings => $d_model, max_seq_length => $max_seq_len, dropout => $dropout);
 my $tgt_pos = ML::PositionalEmbeddings->new(embeddings => $d_model, max_seq_length => $max_seq_len, dropout => $dropout);
