@@ -151,11 +151,10 @@ sub forward {
    my $output = [];
 
    foreach my $b (0 .. $N - 1) {
-      my $out = [];
-      foreach my $i (@{$self->{input}[$b]}) {
-         push @$out, $self->{W}[$i];
-      }
-      $output->[$b] = dclone($out);
+      # Shallow-copy each row so shared tokens (e.g. repeated PAD) don't
+      # alias to the same array — otherwise downstream in-place ops
+      # (like mult_constant) multiply shared rows multiple times.
+      $output->[$b] = [ map { [ @{$self->{W}[$_]} ] } @{$self->{input}[$b]} ];
    }
    if ($self->{debug}) {
       foreach my $b(0 .. $N - 1) {
