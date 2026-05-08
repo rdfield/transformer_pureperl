@@ -119,6 +119,18 @@ sub forward {
             }
          }
       }
+      print_2d_array("pos embed output $b", $output->[$b]) if $self->{debug};
+   }
+   if ($ENV{GRAD_PROBE}) {
+      my $sumsq_in = 0;
+      for my $b (@$input)  { for my $r (@$b) { $sumsq_in  += $_ * $_ for @$r } }
+      my $sumsq_pe = 0;
+      for my $r (@{$self->{position_embeds}[0]}) { $sumsq_pe += $_ * $_ for @$r }
+      my $sumsq_out = 0;
+      for my $b (@$output) { for my $r (@$b) { $sumsq_out += $_ * $_ for @$r } }
+      printf "    [pe_fwd] |in|=%.3e  |pe|=%.3e  |out|=%.3e  drop=%s\n",
+             sqrt($sumsq_in), sqrt($sumsq_pe), sqrt($sumsq_out),
+             defined($self->{dropout}) ? $self->{dropout} : "none";
    }
 
    return $output;

@@ -53,6 +53,19 @@ sub forward {
          say "multiplier = " . sqrt($self->{embeddings});
       }
       mult_constant($output->[$b], sqrt($self->{embeddings}));
+      if ($self->{debug}) {
+         print_2d_array("input embed output $b", $output->[$b]);
+      }
+   }
+   if ($ENV{GRAD_PROBE}) {
+      my $sumsq = 0;
+      for my $b (@$output) { for my $r (@$b) { $sumsq += $_ * $_ for @$r } }
+      my $wsq = 0;
+      for my $r (@{$self->{embedding}{W}}) { $wsq += $_ * $_ for @$r }
+      printf "    [embed_fwd] |out|=%.3e  |W|=%.3e  vocab=%d emb=%d  bs=%d seq=%d\n",
+             sqrt($sumsq), sqrt($wsq), scalar(@{$self->{embedding}{W}}),
+             scalar(@{$self->{embedding}{W}[0]}),
+             scalar(@$output), scalar(@{$output->[0]});
    }
    return $output;
 }
