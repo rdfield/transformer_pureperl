@@ -1,4 +1,5 @@
 *.json
+*.swp
 emails.txt
 email_categories.csv
 ml_fixes.tar.gz
