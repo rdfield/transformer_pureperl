@@ -2,6 +2,7 @@ package ML::BaseTokeniser;
 use Modern::Perl;
 use Encode qw(encode decode);
 use Data::Dumper;
+use Carp qw(confess);
 =pod
 Contains the base Tokenizer class and a few common helper functions.
 The base class also contains the (common) save/load functionality.
@@ -38,10 +39,40 @@ sub get_stats {
    return $counts;
 }
 
+sub merge_for_encode {
+  my ($self,$ids, $pair, $idx) = @_;
+=pod
+      In the list of integers (ids), replace all consecutive occurrences
+      of pair with the new integer token idx
+      Example: ids=[1, 2, 3, 1, 2], pair=(1, 2), idx=4 -> [4, 3, 4]
+=cut
+  my $newids = [];
+  my $i = 0;
+  while ($i < scalar(@$ids) ) {
+     # if not at the very last position AND the pair matches, replace it
+     if ($pair->[0] !~ /^\d+$/) {
+        die "unexpected pair 0 = " . $pair->[0] ." " . join(",", caller());
+     }
+     if ($ids->[$i] == $pair->[0] and $i < scalar(@$ids) - 1 and $ids->[$i+1] == $pair->[1]) {
+        push @$newids, $idx;
+        $i += 2;  # skip over the pair
+     } else {
+        push @$newids, $ids->[$i];
+        $i++;
+     }
+  }
+  if (wantarray) {
+     return @$newids;
+  } else {
+     return $newids
+  }
+}
+
 
 
 sub merge {
-   my ($self,$ids, $pair, $idx) = @_; 
+    my $self = shift;
+    my ($ids, $pair, $idx, $counts, $chunks_map, $chid) = @_;
 =pod
     In the list of integers (ids), replace all consecutive occurrences
     of pair with the new integer token idx
@@ -49,6 +80,12 @@ sub merge {
 =cut
    my $newids = [];
    my $i = 0;
+   my $key = $pair->[0] . "," . $pair->[1];
+   if (!defined($counts->{$pair->[0] . "," . $pair->[1]})) {
+      $counts->{$pair->[0] . "," . $pair->[1]}{mergeidx} = $self->{mergeidx}++;
+      $counts->{$pair->[0] . "," . $pair->[1]}{count} = 0;
+   }
+
    while ($i < scalar(@$ids) ) {
        # if not at the very last position AND the pair matches, replace it
        if ($pair->[0] !~ /^\d+$/) {
@@ -56,6 +93,36 @@ sub merge {
        }
        if ($ids->[$i] == $pair->[0] and $i < scalar(@$ids) - 1 and $ids->[$i+1] == $pair->[1]) {
            push @$newids, $idx;
+           $counts->{$ids->[$i] . "," . $ids->[$i + 1]}{count}--;
+           # prev pair
+ if (@$newids > 1) {                       # newids has at least one element BEFORE the $idx we just pushed
+     my $prev = $newids->[-2];               # element before the freshly-pushed $idx
+     $counts->{$prev . "," . $ids->[$i]}{count}--;
+     if ( $counts->{$prev . "," . $ids->[$i]}{count} == 0 ) {
+        delete $counts->{$prev . "," . $ids->[$i]};
+     }
+     if (!defined($counts->{$prev . "," . $idx})) {
+        $counts->{$prev . "," . $idx}{count} = 1;
+        $counts->{$prev . "," . $idx}{mergeidx} = $self->{mergeidx}++;
+     } else {
+        $counts->{$prev . "," . $idx}{count}++;
+     }
+     $chunks_map->{$prev . "," . $idx}{$chid} = 1;
+  }
+
+           if ($i < scalar(@$ids) - 2) {
+              $counts->{$ids->[$i + 1] . "," . $ids->[$i + 2] }{count}--;
+              if ( $counts->{$ids->[$i + 1] . "," . $ids->[$i + 2]}{count} == 0 ) {
+                 delete $counts->{$ids->[$i + 1] . "," . $ids->[$i + 2]};
+              }
+              if (!defined($counts->{$idx. "," . $ids->[$i + 2]})) {
+                 $counts->{$idx . "," . $ids->[$i + 2]}{count} = 1;
+                 $counts->{$idx . "," . $ids->[$i + 2]}{mergeidx} = $self->{mergeidx}++;
+              } else {
+                 $counts->{$idx . "," . $ids->[$i + 2] }{count}++;
+              }
+              $chunks_map->{$idx . "," . $ids->[$i+2]}{$chid} = 1;
+           }
            $i += 2;  # skip over the pair
        } else {
            push @$newids, $ids->[$i];
@@ -128,6 +195,9 @@ sub _build_vocab {
    }
    foreach my $m (@{$self->{merges}}) {
       $vocab[$m->{"value"}] = $vocab[$m->{pair}[0]]. $vocab[$m->{pair}[1]];
+      if ($m->{"value"} >= $self->{vocab_size}) {
+         $self->{vocab_size} = $m->{"value"} + 1; # vocab file is 0-relative, so the count is + 1
+      }
    }  
 =pod
    foreach my $s (keys %{$self->{special_tokens}}) {
@@ -216,7 +286,6 @@ sub load {
    # read the special tokens
    my $num_special = <F>;
    chomp($num_special);
-say "number of special tokens = " . $num_special;
    $num_special *= 1; 
    foreach my $idx ( 0 .. $num_special -1 ) {
       my $line = <F>;

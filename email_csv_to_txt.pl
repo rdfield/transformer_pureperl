@@ -10,6 +10,7 @@ while (my $row = $csv->getline($fhin)) {
    my $body = decode_base64($row->[2]);
    utf8::decode($body);
    
-   print $fhout  $row->[1] . "\n$body\n";
+   #print $fhout  $row->[1] . "\n$body\n";
+   print $fhout "$body\n"; # don't include the category in the corpus
 }
 close $fhout;

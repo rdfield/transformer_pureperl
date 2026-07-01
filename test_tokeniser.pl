@@ -99,7 +99,7 @@ say "TEST 1: Smoke — train and vocab_size";
 say "=" x 70;
 
 {
-    my $tok = ML::Tokeniser->new(vocab_size => 276);
+    my $tok = ML::Tokeniser->new(vocab_size => 276, verbose => 1);
     $tok->train(text => $TRAIN_TEXT);
     ok("vocab_size == 276", $tok->vocab_size() == 276);
     ok("merges() has 20 entries", scalar(@{$tok->merges()}) == 20);

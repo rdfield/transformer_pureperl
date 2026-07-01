@@ -5,20 +5,27 @@ use lib '.';
 use ML::Tokeniser;
 use File::Temp qw(tempfile);
 use File::Slurp;
+use Time::HiRes qw(time);
 
 binmode(STDOUT, ':utf8');
+$|++;
 
-my $tok = ML::Tokeniser->new(vocab_size => 1000);
+my $t_start = time;
+
+my $tok = ML::Tokeniser->new(vocab_size => 8000);
 my $emails = read_file("emails.txt");
+
+warn sprintf "read_file: %.2fs\n", time - $t_start;
+
 say "Corpus length: " . length($emails) . " chars";
-say "Training tokeniser (744 merges)...";
+say "Training tokeniser (7744 merges)...";
 $tok->train(text => $emails);
 say "Training complete.";
 $tok->register_special_tokens({                                                                                                       
-      '[PAD]' => 1000,                                                                                                                  
-      '[CLS]' => 1001,
-      '[UNK]' => 1002,                                                                                                                  
+      '[PAD]' => 8000,                                                                                                                  
+      '[CLS]' => 8001,
+      '[UNK]' => 8002,                                                                                                                  
 });                                                                                                                                 
                     
-$tok->save(file => "client_emails");
+$tok->save(file => "client_emails_8000");
 
