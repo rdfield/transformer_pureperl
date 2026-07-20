@@ -7,6 +7,11 @@ use utf8;
 
 $|++;
 
+my ($model, $infile, $outfile) = @ARGV;
+die "usage perl client_tokenise_emails.pl <model file> <infile> <outfile>"
+unless (defined($model) and -e $model and defined($infile) and -e $infile and defined($outfile));
+
+
 my $categories = {
       "OOT" => 6,
       "Onboarding" => 9,
@@ -21,11 +26,11 @@ my $categories = {
       "Services" => 10
    };
 
-my $filename = "client_emails_8000.model";
-open OUTFILE, ">", "tokenised_emails_8000.csv";
+open OUTFILE, ">", $outfile;
 
-my $tok = ML::Tokeniser->new(vocab_size => 8000);
-$tok->load(file => "$filename");
+my $tok = ML::Tokeniser->new(vocab_size => 1000);
+
+$tok->load(file => "$model");
 
 my $cls_id = $tok->{special_tokens}{'[CLS]'};
 
@@ -34,7 +39,7 @@ my $csv = Text::CSV->new();
 my @lengths;
 my %lengths_by_class;
 my @buckets;
-open my $fhin, "<:encoding(utf8)", "email_categories.csv" or die $!;
+open my $fhin, "<:encoding(utf8)", $infile or die $!;
 my $row_count = 0;
 while (my $row = $csv->getline($fhin)) {
    my $body = decode_base64($row->[2]);
