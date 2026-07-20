@@ -38,7 +38,7 @@ sub train {
 
    my @chunks = $text =~ /$GPT4_SPLIT_PATTERN/gms;
 
-  warn sprintf "regex split: %.2fs, %d chunks\n", time - $t, scalar(@chunks);
+  #warn sprintf "regex split: %.2fs, %d chunks\n", time - $t, scalar(@chunks);
 
   $t = time;
    my @ids;
@@ -46,7 +46,7 @@ sub train {
       my @ch_ids = map { utf8::encode($_); unpack('C*', $_)} split//,$ch ;
       push  @ids , \@ch_ids;
    } 
-  warn sprintf "byte array : %.2fs\n", time - $t;
+  #warn sprintf "byte array : %.2fs\n", time - $t;
    if ($self->{verbose}) {
       foreach my $ch (@ids) {
          print "[" . join(", ",@$ch) . "], ";
@@ -75,7 +75,7 @@ sub train {
       }
   }
 
-  warn sprintf "stats hash : %.2fs\n", time - $t;
+  #warn sprintf "stats hash : %.2fs\n", time - $t;
    # module in py resets vocab, but it already set to [0 .. 256]
    foreach my $i (0 .. $num_merges - 1) {
       $t = time;
@@ -97,12 +97,15 @@ sub train {
       my $most_frequent_pair = [ split/,/, $most_frequent_key ];
      
       say "pair_to_find = " . join(", ", @$most_frequent_pair) if $self->{verbose};
+
+=pod
  warn sprintf "  iter %d: best=%s count=%d  stats{32,256}=%d  stats{32,32}=%d\n",
       $i,
       $most_frequent_key,
       $stats->{$most_frequent_key}->{count},
       ($stats->{"32,256"}{count} // 0),
       ($stats->{"32,32"}{count} // 0);
+=cut
 
       my $idx = 256 + $i;
       $t = time;
@@ -139,7 +142,6 @@ sub _build_merges_hash {
 }
 
 sub _encode {
-say "encode called";
    my ($self, $text) = @_;
    my @ids = map { utf8::encode($_); unpack('C*', $_)} split//,$text;
    $self->_build_merges_hash unless exists $self->{merges_hash};

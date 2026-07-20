@@ -12,20 +12,18 @@ $|++;
 
 my $t_start = time;
 
-my $tok = ML::Tokeniser->new(vocab_size => 8000);
-my $emails = read_file("emails.txt");
+my ($vocab_size, $infile, $outfile) = @ARGV;
+die "usage perl build_client_vocab.pl <vocab size> <train data file name> <output file name>" unless (defined($vocab_size) and defined($infile) and -e $infile and defined($outfile));
 
-warn sprintf "read_file: %.2fs\n", time - $t_start;
+my $tok = ML::Tokeniser->new(vocab_size => $vocab_size);
+my $emails = read_file($infile);
 
-say "Corpus length: " . length($emails) . " chars";
-say "Training tokeniser (7744 merges)...";
 $tok->train(text => $emails);
-say "Training complete.";
-$tok->register_special_tokens({                                                                                                       
-      '[PAD]' => 8000,                                                                                                                  
-      '[CLS]' => 8001,
-      '[UNK]' => 8002,                                                                                                                  
+$tok->register_special_tokens({
+      '[PAD]' => $vocab_size,
+      '[CLS]' => $vocab_size + 1,
+      '[UNK]' => $vocab_size + 2,
 });                                                                                                                                 
                     
-$tok->save(file => "client_emails_8000");
+$tok->save(file => $outfile);
 

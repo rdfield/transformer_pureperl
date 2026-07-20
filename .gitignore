@@ -7,3 +7,13 @@ ml_fixes.tar.gz
 train_model_*.pl
 run*train_model.pl
 CLAUDE.md
+
+# BPE vocab artefacts (regeneratable from source, large binary blobs)
+*.model
+*.vocab
+
+# LibreOffice / office lock files
+.~lock.*
+
+# Perl Inline::CPP cache
+_Inline/
