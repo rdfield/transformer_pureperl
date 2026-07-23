@@ -23,6 +23,8 @@ $tok->register_special_tokens({
       '[PAD]' => $vocab_size,
       '[CLS]' => $vocab_size + 1,
       '[UNK]' => $vocab_size + 2,
+      '[SEP]' => $vocab_size + 3,   # SLM: email/summary separator
+      '[EOS]' => $vocab_size + 4,   # SLM: end of generated summary
 });                                                                                                                                 
                     
 $tok->save(file => $outfile);
