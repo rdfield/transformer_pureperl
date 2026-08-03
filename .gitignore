@@ -17,3 +17,11 @@ CLAUDE.md
 
 # Perl Inline::CPP cache
 _Inline/
+
+# regenerated training data + audit artifacts (large, regeneratable)
+email_sumararies_regen_v2.txt
+email_ids_regen_v2.txt
+email_summary_ids.txt
+trimmed_emails.txt
+spot_audit_*.txt
+filtered_*.txt
