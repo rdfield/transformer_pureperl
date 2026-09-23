@@ -5,11 +5,11 @@
 # shows each GEN vs REF pair, and captures a single-keypress verdict:
 #   f = faithful    a = acceptable    w = wrong    s = skip (unscored)
 #   b = back (re-score previous)   q = quit & show tally   ? = help
-# For a 'w', a follow-up key records WHY, so you get the split that decides
-# whether the post-filter is enough:
-#   l = literal fabrication (email/phone/PO/SKU invented -> post-filter catches)
-#   m = mangled real entity (name/number garbled        -> needs more data)
-#   o = other (missing key fact, degenerate, etc.)
+# For a 'w', a follow-up key records WHY, so the residual maps to a fix-lever:
+#   l = fabricated literal (email/phone/PO/SKU invented -> post-filter catches)
+#   e = entity-mangle (real name/PO/SKU garbled         -> metadata templating)
+#   g = garble/repetition (made-up words, broken prose  -> fluency/decode)
+#   s = semantic-miss (missed/inverted the actual ask   -> comprehension/data)
 #
 # Verdicts are written to <auditfile>.results.csv after every keypress, so a
 # crash or quit never loses work and re-running resumes where you left off.
@@ -87,7 +87,8 @@ sub c { my ($code, $s) = @_; $tty ? "\e[${code}m$s\e[0m" : $s; }
 sub clear { print $tty ? "\e[2J\e[H" : "\n" x 3; }
 
 my %LABELNAME = (f => 'FAITHFUL', a => 'ACCEPTABLE', w => 'WRONG', s => 'skip');
-my %WHYNAME   = (l => 'literal-fabrication', m => 'mangled-entity', o => 'other');
+my %WHYNAME   = (l => 'fabricated-literal', e => 'entity-mangle',
+                 g => 'garble/repetition', s => 'semantic-miss');
 
 sub help_screen {
     clear();
@@ -99,10 +100,11 @@ sub help_screen {
     print "  ", c('36','b'), "  back        — return to previous item to re-score\n";
     print "  ", c('36','q'), "  quit        — save and show the tally\n";
     print "  ", c('36','?'), "  this help\n\n";
-    print "After 'w' you'll be asked WHY: ",
-          c('36','l'),"=literal-fabrication  ",
-          c('36','m'),"=mangled-entity  ",
-          c('36','o'),"=other  (Enter=unspecified)\n\n";
+    print "After 'w' you'll be asked WHY (maps to the fix-lever):\n",
+          "  ", c('36','l'), "=fabricated-literal (post-filter)   ",
+          c('36','e'), "=entity-mangle (templating)\n",
+          "  ", c('36','g'), "=garble/repetition (fluency/decode) ",
+          c('36','s'), "=semantic-miss (comprehension)   (Enter=unspecified)\n\n";
     print "press any key to continue...";
     getkey();
 }
@@ -142,9 +144,9 @@ while (1) {
     elsif ($k eq 's') { $score{$num} = ['skip','']; save_results(); }
     elsif ($k eq 'f' || $k eq 'a') { $score{$num} = [$k,'']; save_results(); }
     elsif ($k eq 'w') {
-        print c('1;31', $k), "  why? [l]iteral [m]angled [o]ther (Enter=unspec) > ";
+        print c('1;31', $k), "  why? [l]iteral [e]ntity [g]arble [s]emantic (Enter=unspec) > ";
         my $why = getkey();
-        $why = '' unless $why =~ /^[lmo]$/;
+        $why = '' unless $why =~ /^[legs]$/;
         $score{$num} = ['w', $why];
         save_results();
     }
@@ -159,13 +161,13 @@ raw_off();
 
 # ---- tally --------------------------------------------------------------
 my %n = (f=>0, a=>0, w=>0, skip=>0);
-my %why = (l=>0, m=>0, o=>0, unspec=>0);
+my %why = (l=>0, e=>0, g=>0, s=>0, unspec=>0);
 for my $r (@rec) {
     my $s = $score{$r->{num}} or next;
     $n{$s->[0]}++;
     if ($s->[0] eq 'w') {
         my $w = $s->[1];
-        $why{ $w =~ /^[lmo]$/ ? $w : 'unspec' }++;
+        $why{ $w =~ /^[legs]$/ ? $w : 'unspec' }++;
     }
 }
 my $scored = $n{f} + $n{a} + $n{w};
@@ -185,9 +187,10 @@ printf "  %-12s %3d   %s   %s\n", 'faith+accept', $n{f}+$n{a}, $pc->($n{f}+$n{a}
     c('1', '<- ship signal');
 if ($n{w}) {
     print "\n  wrong breakdown ($n{w}):\n";
-    printf "    %-34s %3d\n", 'literal fabrication (post-filter)', $why{l};
-    printf "    %-34s %3d\n", 'mangled entity (needs data)',       $why{m};
-    printf "    %-34s %3d\n", 'other',                             $why{o};
-    printf "    %-34s %3d\n", 'unspecified',                       $why{unspec} if $why{unspec};
+    printf "    %-38s %3d\n", 'fabricated literal (post-filter)',   $why{l};
+    printf "    %-38s %3d\n", 'entity-mangle (templating)',         $why{e};
+    printf "    %-38s %3d\n", 'garble/repetition (fluency/decode)', $why{g};
+    printf "    %-38s %3d\n", 'semantic-miss (comprehension/data)', $why{s};
+    printf "    %-38s %3d\n", 'unspecified',                        $why{unspec} if $why{unspec};
 }
 print "\n";

@@ -2,7 +2,7 @@ use Modern::Perl;
 use Text::CSV;
 use MIME::Base64 qw(decode_base64);
 use utf8;
-use lib '.';
+use lib '/home/mvine/embedding';
 use ML::Tokeniser;
 use Data::Dumper;
 
@@ -26,11 +26,13 @@ my $sep_id = $tok->{special_tokens}{"[SEP]"};
 die "no [SEP] defined in model" unless $sep_id;
 
 my $processed = 0;
+my $basecol;
 while (my $row = $csv->getline($fhin)) {
+   $basecol ||= scalar(@$row) - 2; # will be 0 for 2 column input, 1 for 3 column input that has the email id as the first column
 # email id expected at $row->[0];
-   my $body = decode_base64($row->[1]);
+   my $body = decode_base64($row->[$basecol]);
    utf8::decode($body);
-   my $summary = decode_base64($row->[2]);
+   my $summary = decode_base64($row->[$basecol + 1]);
    utf8::decode($summary);
    print $fhout  join(",", @{$tok->encode(text => $body)}) . ",$sep_id," . join(",", @{$tok->encode(text => $summary)}) . "\n";
    $processed++;

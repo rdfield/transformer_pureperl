@@ -25,3 +25,26 @@ email_summary_ids.txt
 trimmed_emails.txt
 spot_audit_*.txt
 filtered_*.txt
+
+# --- 2026-09 enc-dec summariser work ---
+# Encoded corpora and intermediates (GB-scale, regeneratable from source)
+enron_emails_base64.txt
+enron_emails_base64.txt.encoded
+enron_full.train
+enron_full.val
+enron_email_ids*.txt
+enron_email_bodies.txt
+train_150000.txt
+val_150000.txt
+train_8000_v4.txt
+val_8000_v4.txt
+client_encoded_emails_v4.txt
+email_sumararies_regen_v4*.txt
+email_summaries_8000_v4.txt
+*.model.out
+split_test/
+
+# Contains a plaintext OpenAI API key — must move to an env var before tracking
+truncate_emails_regen_summary.pl
+enron_filtered_8000.txt
+enron_cosmo_filtered_8000.txt

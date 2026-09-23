@@ -72,7 +72,7 @@ sub merge_for_encode {
 
 sub merge {
     my $self = shift;
-    my ($ids, $pair, $idx, $counts, $chunks_map, $chid) = @_;
+    my ($ids, $pair, $idx, $counts, $chunks_map, $chid, $w) = @_;
 =pod
     In the list of integers (ids), replace all consecutive occurrences
     of pair with the new integer token idx
@@ -93,35 +93,35 @@ sub merge {
        }
        if ($ids->[$i] == $pair->[0] and $i < scalar(@$ids) - 1 and $ids->[$i+1] == $pair->[1]) {
            push @$newids, $idx;
-           $counts->{$ids->[$i] . "," . $ids->[$i + 1]}{count}--;
+           $counts->{$ids->[$i] . "," . $ids->[$i + 1]}{count}-=$w;
            # prev pair
- if (@$newids > 1) {                       # newids has at least one element BEFORE the $idx we just pushed
-     my $prev = $newids->[-2];               # element before the freshly-pushed $idx
-     $counts->{$prev . "," . $ids->[$i]}{count}--;
-     if ( $counts->{$prev . "," . $ids->[$i]}{count} == 0 ) {
-        delete $counts->{$prev . "," . $ids->[$i]};
-     }
-     if (!defined($counts->{$prev . "," . $idx})) {
-        $counts->{$prev . "," . $idx}{count} = 1;
-        $counts->{$prev . "," . $idx}{mergeidx} = $self->{mergeidx}++;
-     } else {
-        $counts->{$prev . "," . $idx}{count}++;
-     }
-     $chunks_map->{$prev . "," . $idx}{$chid} = 1;
-  }
+           if (@$newids > 1) {         # newids has at least one element BEFORE the $idx we just pushed
+              my $prev = $newids->[-2];# element before the freshly-pushed $idx
+              $counts->{$prev . "," . $ids->[$i]}{count}-=$w;
+              if ( $counts->{$prev . "," . $ids->[$i]}{count} == 0 ) {
+                 delete $counts->{$prev . "," . $ids->[$i]};
+              }
+              if (!defined($counts->{$prev . "," . $idx})) {
+                 $counts->{$prev . "," . $idx}{count} = $w;
+                 $counts->{$prev . "," . $idx}{mergeidx} = $self->{mergeidx}++;
+              } else {
+                 $counts->{$prev . "," . $idx}{count}+=$w;
+              }
+          #    $chunks_map->{$prev . "," . $idx}{$chid} = 1;
+           }
 
            if ($i < scalar(@$ids) - 2) {
-              $counts->{$ids->[$i + 1] . "," . $ids->[$i + 2] }{count}--;
+              $counts->{$ids->[$i + 1] . "," . $ids->[$i + 2] }{count}-=$w;
               if ( $counts->{$ids->[$i + 1] . "," . $ids->[$i + 2]}{count} == 0 ) {
                  delete $counts->{$ids->[$i + 1] . "," . $ids->[$i + 2]};
               }
               if (!defined($counts->{$idx. "," . $ids->[$i + 2]})) {
-                 $counts->{$idx . "," . $ids->[$i + 2]}{count} = 1;
+                 $counts->{$idx . "," . $ids->[$i + 2]}{count} = $w;
                  $counts->{$idx . "," . $ids->[$i + 2]}{mergeidx} = $self->{mergeidx}++;
               } else {
-                 $counts->{$idx . "," . $ids->[$i + 2] }{count}++;
+                 $counts->{$idx . "," . $ids->[$i + 2] }{count}+=$w;
               }
-              $chunks_map->{$idx . "," . $ids->[$i+2]}{$chid} = 1;
+          #    $chunks_map->{$idx . "," . $ids->[$i+2]}{$chid} = 1;
            }
            $i += 2;  # skip over the pair
        } else {
@@ -129,6 +129,16 @@ sub merge {
            $i++;
        }
    }
+   my %newpairs;                                                                                                                                                 
+   for my $j (0 .. $#$newids - 1) {                                                                                                                              
+      my $np = $newids->[$j] . "," . $newids->[$j+1];                                                                                                            
+      $newpairs{$np} = 1;                                                                                                                                        
+      $chunks_map->{$np}{$chid} = 1;        # register chunk under its new pairs                                                                                 
+   }                                                                                                                                                             
+   for my $j (0 .. $#$ids - 1) {                                                                                                                                 
+      my $op = $ids->[$j] . "," . $ids->[$j+1];                                                                                                                  
+      delete $chunks_map->{$op}{$chid} unless $newpairs{$op};   # drop stale entries                                                                             
+   }                               
    if (wantarray) {
       return @$newids;
    } else {

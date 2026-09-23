@@ -38,15 +38,13 @@ sub train {
 
    my @chunks = $text =~ /$GPT4_SPLIT_PATTERN/gms;
 
-  #warn sprintf "regex split: %.2fs, %d chunks\n", time - $t, scalar(@chunks);
-
   $t = time;
-   my @ids;
-   foreach my $ch (@chunks) {
-      my @ch_ids = map { utf8::encode($_); unpack('C*', $_)} split//,$ch ;
-      push  @ids , \@ch_ids;
+   my (%freq, @weight, @ids);
+   $freq{$_}++ for @chunks;
+   foreach my $ch (keys %freq) {
+      push @ids , [ map { utf8::encode($_); unpack('C*', $_)} split//,$ch ];
+      push @weight, $freq{$ch};
    } 
-  #warn sprintf "byte array : %.2fs\n", time - $t;
    if ($self->{verbose}) {
       foreach my $ch (@ids) {
          print "[" . join(", ",@$ch) . "], ";
@@ -57,26 +55,19 @@ sub train {
    my $stats = {};
    my $pair_to_chunks = {};
    $t = time;
-=pod
-   foreach my $ch (@ids) {
-      $stats = $self->get_stats($ch, $stats);
-   }
-=cut
 
   for my $ci (0 .. $#ids) {
       my $ch = $ids[$ci];
       for my $i (0 .. $#$ch - 1) {
           my $key = "$ch->[$i],$ch->[$i+1]";
-          $stats->{$key}{count}++;
-          if ($stats->{$key}{count} == 1) {
-             $stats->{$key}{mergeidx} = $self->{mergeidx}++;
-          }
+          $stats->{$key}{count}+=$weight[$ci];
+          #if ($stats->{$key}{count} == 1) {
+             $stats->{$key}{mergeidx} //= $self->{mergeidx}++;
+          #}
           $pair_to_chunks->{$key}{$ci} = 1;
       }
   }
 
-  #warn sprintf "stats hash : %.2fs\n", time - $t;
-   # module in py resets vocab, but it already set to [0 .. 256]
    foreach my $i (0 .. $num_merges - 1) {
       $t = time;
       if ($i % 50 == 0) {
@@ -98,25 +89,14 @@ sub train {
      
       say "pair_to_find = " . join(", ", @$most_frequent_pair) if $self->{verbose};
 
-=pod
- warn sprintf "  iter %d: best=%s count=%d  stats{32,256}=%d  stats{32,32}=%d\n",
-      $i,
-      $most_frequent_key,
-      $stats->{$most_frequent_key}->{count},
-      ($stats->{"32,256"}{count} // 0),
-      ($stats->{"32,32"}{count} // 0);
-=cut
-
       my $idx = 256 + $i;
       $t = time;
-#      foreach my $ch (@ids) {
       my @affected = keys %{$pair_to_chunks->{$most_frequent_key}};
       if (scalar(@affected) > 0) {
          foreach my $ch (@affected) {
-            $ids[$ch] = $self->merge($ids[$ch], $most_frequent_pair, $idx, $stats, $pair_to_chunks, $ch);
+            $ids[$ch] = $self->merge($ids[$ch], $most_frequent_pair, $idx, $stats, $pair_to_chunks, $ch, $weight[$ch]);
          }
       }
-  #warn sprintf "merge: %.2fs\n", time - $t;
       #push @{$self->{merges}}, { key => $sorted[0]->{key}, pair => $most_frequent_pair, value => $idx };
       push @{$self->{merges}}, { key => $most_frequent_key, pair => $most_frequent_pair, value => $idx };
       $self->{vocab}[$idx] = $self->{vocab}[$most_frequent_pair->[0]] . $self->{vocab}[$most_frequent_pair->[1]];

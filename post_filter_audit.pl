@@ -26,16 +26,20 @@ binmode(STDERR, ':utf8');
 
 my $SEP = 16003;
 my $val_path = '/home/mvine/embedding/slm_val_j07.csv';
+my $vocab_path;
+
 my $mode     = 'placeholder';
 for (my $i = 0; $i < @ARGV; $i++) {
    if    ($ARGV[$i] eq '--val')  { $val_path = $ARGV[++$i]; }
    elsif ($ARGV[$i] eq '--mode') { $mode     = $ARGV[++$i]; }
+   elsif ($ARGV[$i] eq '--vocab') { $vocab_path     = $ARGV[++$i]; }
    else { die "unknown arg $ARGV[$i]\n"; }
 }
 die "mode must be placeholder|strip\n" unless $mode =~ /^(placeholder|strip)$/;
+die "--vocab must be a minbpe file" unless defined($vocab_path) and -e $vocab_path;
 
-my $t = ML::Tokeniser->new(vocab_size => 16000);
-$t->load(file => '/home/mvine/embedding/client_emails_16000.model');
+my $t = ML::Tokeniser->new(vocab_size => 276);
+$t->load(file => $vocab_path);
 
 # source email text per val line (decode the ids before the first SEP)
 open my $vf, '<', $val_path or die "open $val_path: $!\n";

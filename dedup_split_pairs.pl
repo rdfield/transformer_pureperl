@@ -14,42 +14,54 @@
 # Then a seeded shuffle and split (--val-frac, default 0.1).
 #
 # usage: perl dedup_split_pairs.pl <pairs.csv> <train_out> <val_out>
-#           [--val-frac 0.1] [--seed 42] [--jaccard 0.8]
+#           [--val-frac 0.1] [--seed 42] [--jaccard 0.8] [ --min-len 160 ]
+#
+# added "min email length", short emails to be discarded
+#
 use Modern::Perl;
-use lib '.';
+use lib '/home/mvine/embedding';
+use ML::Tokeniser;
 
-my $SEP_ID = 16003;
 
-my ($infile, $train_out, $val_out, @rest) = @ARGV;
-die "usage: perl dedup_split_pairs.pl <pairs.csv> <train_out> <val_out> [--val-frac F] [--seed N] [--jaccard F]\n"
-   unless defined($infile) and -e $infile and defined($train_out) and defined($val_out);
+my ($infile, $train_out, $val_out, $model, @rest) = @ARGV;
+die "usage: perl dedup_split_pairs.pl <pairs.csv> <train_out> <val_out> <model> [--val-frac F] [--seed N] [--jaccard F]  [ --min-len 160 ]\n"
+   unless defined($infile) and -e $infile and defined($train_out) and defined($val_out) and defined($model);
 
-my %opt = ('--val-frac' => 0.1, '--seed' => 42, '--jaccard' => 0.5);
+my %opt = ('--val-frac' => 0.1, '--seed' => 42, '--jaccard' => 0.5, '--min-len' => 160);
 while (@rest) {
    my $k = shift @rest;
    die "unknown or valueless option $k\n" unless exists $opt{$k} and @rest;
    $opt{$k} = shift @rest;
 }
 
+my $tok = ML::Tokeniser->new(vocab_size => 276);
+$tok->load(file => "$model");
+my $SEP_ID = $tok->{special_tokens}{"[SEP]"};
+
 # ---- load ------------------------------------------------------------------
 open(my $in, '<', $infile) or die "cannot open $infile: $!\n";
 my @lines;      # raw lines, kept verbatim for output
 my @emails;     # arrayref of email ids per line
 my $malformed = 0;
+my $short = 0;
 while (my $line = <$in>) {
    chomp $line;
    next unless length $line;
    my @ids = split /,/, $line;
+   do { $malformed++; next } if grep { !length } @ids; 
    my ($sep_at) = grep { $ids[$_] == $SEP_ID } 0 .. $#ids;
    if (!defined($sep_at) or $sep_at == 0 or $sep_at == $#ids) {
       $malformed++;
       next;
    }
+   my @email_ids = @ids[0 .. $sep_at - 1];
+   my $email = $tok->decode(ids => \@email_ids);
+   do { $short++; next } unless length($email) > $opt{"--min-len"};
    push @lines, $line;
    push @emails, [ @ids[0 .. $sep_at - 1] ];
 }
 close $in;
-say "loaded: " . scalar(@lines) . " pairs ($malformed malformed skipped)";
+say "loaded: " . scalar(@lines) . " pairs ($malformed malformed $short short skipped)";
 
 # ---- pass 1: exact dedup ---------------------------------------------------
 my %seen_exact;
