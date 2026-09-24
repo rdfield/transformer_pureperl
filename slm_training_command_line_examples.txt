@@ -170,4 +170,25 @@ fine tune training
      2>&1 | tee /home/mvine/shared/rdf/pretrain_data/encdec_d256_16k_thread.log
 
 
+
+SPOT AUDIT
+
+ cd /home/mvine/embedding_cpp && ./build/MVEncDecInfer \
+     --model /home/mvine/shared/rdf/pretrain_data/encdec_d256_16k_thread_ft.safetensors \
+     --input /home/mvine/shared/rdf/pretrain_data/val_16000_finetune.txt \
+     --vocab /home/mvine/shared/rdf/pretrain_data/cosmo_client_blended2.model \
+     --d 256 --enc_layers 4 --dec_layers 4 --heads 8 --d_ff 1024 \
+     --seq_enc 2048 --seq_tgt 240 --email_budget 2048 --max_new 224 \
+     --no_repeat_ngram 3 --n 100 > /home/mvine/gen_audit100.txt 2>&1
+
+  Score it:
+  perl /home/mvine/embedding/audit_generations.pl /home/mvine/gen_audit100.txt
+
+  Decode to readable text for the eyeball audit:
+  VOCAB=/home/mvine/shared/rdf/pretrain_data/cosmo_client_blended2.model \
+     perl /home/mvine/embedding/decode_gen2.pl < /home/mvine/gen_audit100.txt \
+     > /home/mvine/audit100_text.txt
+
+
+
  
