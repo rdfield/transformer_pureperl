@@ -39,8 +39,12 @@
 #
 use Modern::Perl;
 use Getopt::Long;
+use lib '.';
 use Text::CSV;
 use MIME::Base64 qw(decode_base64);
+# Shared with repair_identifiers.pl ON PURPOSE: if the two disagreed about what an
+# identifier is, measuring the repair's effect would count different populations.
+use ML::Identifiers qw(identifiers best_prefix_match common_prefix);
 
 my $MIN_PREFIX = 4;    # chars of agreement before we call it drift rather than invention
 my $MIN_LEN    = 5;    # shortest string we treat as an identifier
@@ -68,7 +72,7 @@ say "source threads: " . scalar(@ids);
 
 # identifiers in each source, extracted once
 my %src_ids;
-$src_ids{$_} = [ identifiers($src{$_}) ] for @ids;
+$src_ids{$_} = [ ids($src{$_}) ] for @ids;
 my $tot_src = 0; $tot_src += scalar @{ $src_ids{$_} } for @ids;
 say sprintf("source identifiers: %d total, %.1f per thread", $tot_src, $tot_src / @ids);
 
@@ -127,19 +131,14 @@ sub score {
    for my $id (@ids) {
       my $s = $sum->{$id};
       next unless defined $s && length $s;
-      my @have = identifiers($s);
+      my @have = ids($s);
       my @pool = @{ $src_ids{$id} };
       my %pool_u = map { uc($_) => $_ } @pool;
       for my $g (@have) {
          $n++;
          my $gu = uc $g;
          if (exists $pool_u{$gu}) { $exact++; $covered{"$id\0$gu"} = 1; next }
-         # longest common prefix against every source identifier
-         my ($best, $blen) = (undef, 0);
-         for my $t (@pool) {
-            my $l = common_prefix($gu, uc $t);
-            ($best, $blen) = ($t, $l) if $l > $blen;
-         }
+         my ($best, $blen) = best_prefix_match($g, \@pool);
          if ($best && $blen >= $MIN_PREFIX) {
             $drift++; $psum += $blen;
             push @worst, [ $best, $g, $blen ];
@@ -152,31 +151,7 @@ sub score {
             prefix_sum => $psum, worst => \@worst, covered => scalar keys %covered };
 }
 
-# An identifier is a run of letters/digits/-/_/ containing at least two digits.
-# Two digits rather than one keeps ordinary words with a stray digit out, while
-# still catching "PO 10000" style references and SKUs like FG-700G.
-sub identifiers {
-   my $t = shift;
-   my @out;
-   for my $w ($t =~ m{([A-Za-z0-9][A-Za-z0-9/_-]{3,})}g) {
-      next if length($w) < $MIN_LEN;
-      my $digits = () = $w =~ /\d/g;
-      next if $digits < 2;
-      next if !$DATES && $w =~ /^\d{4}-\d{2}-\d{2}$/;     # ISO date
-      next if !$DATES && $w =~ /^(19|20)\d{2}$/;          # bare year
-      $w =~ s/[-_\/.]+$//;                                 # trailing punctuation
-      push @out, $w if length($w) >= $MIN_LEN;
-   }
-   my %u; return grep { !$u{ uc $_ }++ } @out;
-}
-
-sub common_prefix {
-   my ($a, $b) = @_;
-   my $max = length($a) < length($b) ? length($a) : length($b);
-   my $i = 0;
-   $i++ while $i < $max && substr($a, $i, 1) eq substr($b, $i, 1);
-   return $i;
-}
+sub ids { return identifiers($_[0], min_len => $MIN_LEN, dates => $DATES) }
 
 sub pc { my ($x, $t) = @_; return $t ? 100 * $x / $t : 0 }
 sub b64 { my $x = decode_base64(shift); utf8::decode($x); return $x }
