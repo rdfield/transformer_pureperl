@@ -76,7 +76,27 @@ push @warn, "$ungraded of " . scalar(keys %map) . " threads have no grades" if $
 my @models = sort {
    rate($b) <=> rate($a)
 } grep { ($tally{$_}{N} // 0) >= $N_MIN } keys %tally;
-die "nothing to tally\n" unless @models;
+unless (@models) {
+   # Say WHY rather than just "nothing to tally" — the overwhelmingly common
+   # cause is running this on the blank template before filling it in, and the
+   # parse warnings that would explain it were being thrown away by the die.
+   say "";
+   say "nothing to tally: no gradeable A/B/C entries were found in $grades.";
+   my $blanks = 0;
+   if (open my $g, '<', $grades) {
+      while (<$g>) { $blanks++ while /=\s*_/g }
+      close $g;
+   }
+   say "$blanks placeholders are still '_' — replace each with A, B or C first."
+      if $blanks;
+   if (@warn) {
+      say "";
+      say "unparsed lines:";
+      say "  $_" for @warn[0 .. ($#warn < 5 ? $#warn : 5)];
+      say "  ... and " . (@warn - 6) . " more" if @warn > 6;
+   }
+   exit 1;
+}
 
 say "";
 printf "%-34s %5s %5s %5s %5s %8s %-16s\n", 'arm', 'n', 'A', 'B', 'C', 'A-rate', '95% interval';
