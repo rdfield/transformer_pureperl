@@ -122,10 +122,17 @@ while (my $r = $csv->getline($fh)) {
 
    # Mirror the production call exactly: the prompt and the email text are one
    # single user turn, prompt first, separated by a space.
+   # reasoning OFF. Several Qwen models reason by default and will spend the
+   # ENTIRE max_tokens budget on a `reasoning` field, returning content: null and
+   # finish_reason: length. Measured on qwen3.7-flash: 200 output tokens of
+   # thinking and an empty summary, against 21 tokens and a correct summary with
+   # reasoning disabled — 7x the cost for nothing. Harmless on models that do not
+   # reason (the 235B ignores it).
    my $payload = encode_json({
       model       => $MODEL,
       temperature => 0,
       max_tokens  => $MAX_TOK,
+      reasoning   => { enabled => \0 },
       messages    => [ { role => 'user', content => $prompt . ' ' . $body } ],
    });
 
@@ -204,7 +211,12 @@ sub call_with_retry {
          }
          my $text = $d->{choices}[0]{message}{content};
          unless (defined $text && length $text) {
-            say "  empty completion, retrying"; sleep($wait); $wait *= 2; next;
+            my $fin = $d->{choices}[0]{finish_reason} // '?';
+            my $rsn = $d->{choices}[0]{message}{reasoning};
+            say $rsn ? "  EMPTY content but reasoning present (finish=$fin) — the model"
+                     . " reasoned away its whole budget; reasoning should be disabled"
+                     : "  empty completion (finish=$fin), retrying";
+            sleep($wait); $wait *= 2; next;
          }
          $text =~ s/^\s+|\s+$//g;
          return ($text, $d->{choices}[0]{finish_reason} // '',

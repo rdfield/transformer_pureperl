@@ -43,11 +43,10 @@ die usage() unless @gens;
 die "vocab $model not found\n"  unless -e $model;
 die "sample $sample not found\n" unless -e $sample;
 
-my $REFUSAL = qr/(no meaningful summary|cannot be summarized meaningfully|
-   lacks sufficient information to summarize|it cannot be summarized|
-   contains no meaningful content|a meaningful summary cannot be provided|
-   it cannot be meaningfully summari[sz]ed|cannot summarise email|
-   cannot be summarised|unable to summari[sz]e)/xi;
+my $REFUSAL = qr/(no\s+meaningful\s+summary|cannot\s+be\s+summarized\s+meaningfully|lacks\s+sufficient\s+information\s+to\s+summarize|it\s+cannot\s+be\s+summarized|contains\s+no\s+meaningful\s+content|a\s+meaningful\s+summary\s+cannot\s+be\s+provided|it\s+cannot\s+be\s+meaningfully\s+summari[sz]ed|cannot\s+summarise\s+email|cannot\s+be\s+summarised|unable\s+to\s+summari[sz]e)/xi;   # NOTE: \s+ not literal spaces — /x strips
+                                              # unescaped whitespace FROM THE PATTERN, which
+                                              # silently concatenated every phrase and made
+                                              # this never match. \s+ also tolerates wrapping.
 
 my $tok = ML::Tokeniser->new(vocab_size => 1000);
 $tok->load(file => $model);

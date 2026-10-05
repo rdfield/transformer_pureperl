@@ -40,16 +40,10 @@ die "refusing to overwrite input\n" if $out eq $in;
 
 # Same refusal phrases the production script screens on, so a thread the
 # incumbent teacher already gave up on never reaches a grader.
-my $REFUSAL = qr/(no meaningful summary|cannot be summarized meaningfully|
-   lacks sufficient information to summarize|lacks meaningful information to summarize|
-   it cannot be summarized|contains no meaningful content|
-   a meaningful summary cannot be provided|it cannot be meaningfully summari[sz]ed|
-   lacks sufficient context or details|lacks enough context or content to summarize|
-   without any clear request or specific details|
-   lacks any meaningful content or context to summarize|
-   no clear request or business details to summarize|cannot summarise email|
-   is unclear and does not contain enough information|
-   content is missing or incomplete|is unclear and lacks sufficient information)/xi;
+my $REFUSAL = qr/(no\s+meaningful\s+summary|cannot\s+be\s+summarized\s+meaningfully|lacks\s+sufficient\s+information\s+to\s+summarize|lacks\s+meaningful\s+information\s+to\s+summarize|it\s+cannot\s+be\s+summarized|contains\s+no\s+meaningful\s+content|a\s+meaningful\s+summary\s+cannot\s+be\s+provided|it\s+cannot\s+be\s+meaningfully\s+summari[sz]ed|lacks\s+sufficient\s+context\s+or\s+details|lacks\s+enough\s+context\s+or\s+content\s+to\s+summarize|without\s+any\s+clear\s+request\s+or\s+specific\s+details|lacks\s+any\s+meaningful\s+content\s+or\s+context\s+to\s+summarize|no\s+clear\s+request\s+or\s+business\s+details\s+to\s+summarize|cannot\s+summarise\s+email|is\s+unclear\s+and\s+does\s+not\s+contain\s+enough\s+information|content\s+is\s+missing\s+or\s+incomplete|is\s+unclear\s+and\s+lacks\s+sufficient\s+information)/xi;   # NOTE: \s+ not literal spaces — /x strips
+                                              # unescaped whitespace FROM THE PATTERN, which
+                                              # silently concatenated every phrase and made
+                                              # this never match. \s+ also tolerates wrapping.
 
 my @cuts = sort { $a <=> $b } split /,/, $BANDS;
 my $nbands = @cuts + 1;
