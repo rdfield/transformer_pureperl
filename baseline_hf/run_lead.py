@@ -60,6 +60,24 @@ CUT = re.compile(
     r"|_{10,}|-{10,}|={10,}"
     r")", re.I)
 
+# Zero-width and soft-hyphen padding. HTML marketing mail pads its preheader
+# with runs of these so the preview text looks right; one val source is 32%
+# invisible characters by count. They SURVIVED BPE ENCODING, so the model is
+# being fed them too — see RESULTS.md, this is a preprocessing finding, not just
+# a baseline one. No reference summary contains a single one.
+INVISIBLE = re.compile(r"[\u200b-\u200f\u2060\u034f\u00ad\ufeff]+")
+
+# Preamble, stripped from the FRONT. Distinct from CUT, which truncates at the
+# first match: when the junk is at the START, truncating there leaves nothing.
+# Two different operations, so two different patterns.
+PREAMBLE = re.compile(
+    r"\A\s*(?:[\w .&'-]{0,30}?)??"              # a bare brand name, e.g. "Vendor-A"
+    r"(?:to view this email as a web ?page|view (?:this email )?in (?:your )?browser"
+    r"|having trouble (?:viewing|reading) this)"
+    # GREEDY span: ", click here" must be consumed. Written lazily first, which
+    # matched zero characters and left "click here" at the head of every lead.
+    r"[^.!?\n]{0,40}[\s,.:;|-]*", re.I)
+
 # A greeting is not content. Drop it so sentence 1 is the actual request.
 GREET = re.compile(
     r"\A\s*(?:general\s+)?"
@@ -85,7 +103,9 @@ def sentences(text, n):
 
 
 def lead(source, n):
-    body = CUT.split(source)[0]
+    body = INVISIBLE.sub(" ", source)
+    body = PREAMBLE.sub("", body)
+    body = CUT.split(body)[0]
     body = GREET.sub("", body)
     body = re.sub(r"\s+", " ", body).strip()
     if not body:                       # the whole email was boilerplate
