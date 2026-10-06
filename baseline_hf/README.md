@@ -105,6 +105,9 @@ is row N everywhere else in the pipeline:
     $PY finetune_bart.py --model facebook/bart-base --epochs 3 --out out/B_bart_base
     $PY run_zeroshot.py --model out/B_bart_base --split val --out out/B_bart_base.jsonl
 
+    # the lead baseline — no model, no GPU, runs in a second. Do this FIRST.
+    $PY run_lead.py --split val --out out/L_lead.jsonl
+
     # characterise the output — extractiveness and boilerplate contamination
     $PY measure.py out/A_bart_large_cnn.jsonl --examples 5
 
@@ -126,6 +129,7 @@ refuses to run below 6 GB rather than trusting the operator to remember.
 |---|---|
 | `prepare_data.py` | decode the client BPE pairs to `data/{train,val}.jsonl` text |
 | `run_zeroshot.py` | generate summaries; used for BOTH arms, so they share a decode path |
+| `run_lead.py` | the lead baseline — no model, strip boilerplate, first N sentences |
 | `measure.py` | extractiveness + boilerplate contamination, split by truncation |
 | `to_bakeoff.py` | emit `_gen.csv` for the project's identifier/grading tooling |
 | `finetune_bart.py` | arm B fine-tune (Seq2SeqTrainer, VRAM-guarded) |
