@@ -1,0 +1,13 @@
+# CLIENT DATA — never commit. data/*.jsonl is decoded client email content: real
+# names, phone numbers, email addresses, postal addresses and order details.
+# out/*.jsonl are summaries OF that content and carry the same information.
+# Everything here is reproducible from the pair files with prepare_data.py.
+data/
+out/
+logs/
+
+# fine-tuned checkpoints (hundreds of MB, and trained on the above)
+B_bart_base/
+*.safetensors
+*.bin
+.decode.pl
