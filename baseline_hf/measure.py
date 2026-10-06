@@ -23,9 +23,17 @@ Report is split by whether the source exceeded the model's input limit, because
 BART's 1024 tokens against our 2048 is a real handicap and a single headline
 number hides it.
 
+Accepts either a run_zeroshot.py/run_lead.py .jsonl or a `*_gen.csv` written by
+the project's gen_to_bakeoff.pl, so OUR model's output is scored by exactly the
+same code as the baselines. That identity is the point: a comparison across four
+systems is worthless if each is measured by its own reader.
+
   python measure.py out/A_bart_large_cnn.jsonl [--split val]
+  python measure.py /tmp/ours_gen.csv
 """
 import argparse
+import base64
+import csv
 import json
 import os
 import re
@@ -61,6 +69,25 @@ def boilerplate(summary):
     return [name for pat, name in BOILERPLATE if re.search(pat, summary, re.I)]
 
 
+def load_gen(path):
+    """-> [{"id", "summary", "truncated"}]. The CSV form is
+    id,model,summary_b64,... and carries no truncation flag; our model's
+    email_budget truncation happens at 2048 tokens in ITS tokeniser, which this
+    script cannot see, so `truncated` is False and the split by truncation is
+    simply not available for that arm."""
+    if path.endswith(".csv"):
+        csv.field_size_limit(10_000_000)
+        out = []
+        with open(path, newline="") as f:
+            for row in csv.reader(f):
+                if len(row) >= 3 and row[0].strip().isdigit():
+                    out.append({"id": int(row[0]),
+                                "summary": base64.b64decode(row[2]).decode("utf-8", "replace"),
+                                "truncated": False})
+        return out
+    return [json.loads(l) for l in open(path)]
+
+
 def stats(rows, label):
     rows = [r for r in rows if r["ext"] is not None]
     if not rows:
@@ -87,8 +114,7 @@ def main():
            for l in open(os.path.join(HERE, "data", f"{args.split}.jsonl"))}
 
     gen, ref = [], []
-    for l in open(args.gen):
-        r = json.loads(l)
+    for r in load_gen(args.gen):
         v = val[r["id"]]
         gen.append({"id": r["id"], "trunc": r.get("truncated", False),
                     "ext": extractiveness(r["summary"], v["source"]),

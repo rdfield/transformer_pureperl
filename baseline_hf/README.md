@@ -31,10 +31,21 @@ same data and the same evaluation, and see where they land.
 
 | arm | model | params | input limit | answers |
 |---|---|---|---|---|
+| **L** | lead baseline — no model | **0** | none | Does this task need a generative model **at all**? Strip the boilerplate, print the first two sentences. |
 | **A** | `facebook/bart-large-cnn` | 406M | 1024 tok | What does an **off-the-shelf** summariser do on client threads, with no training? Not size-matched — this is the ceiling a free download gives you. |
-| **B** | `facebook/bart-base` fine-tuned | 139M | 1024 tok | The real control: would a **properly pretrained** model of comparable size, given the **same 8,118 client pairs**, beat ours? |
+| **B** | `facebook/bart-base` fine-tuned | 139M | 1024 tok | Would a **properly pretrained** model of comparable size, given the **same 8,118 client pairs**, beat ours? |
 
-**Interpreting arm B is the point of the whole exercise:**
+**Arm L was added after arm A, and should have come first.** It is the standard
+control in this literature because it is frequently hard to beat, and a system
+that cannot beat it has not demonstrated that it is summarising. It costs no
+compute. Run it before anything else.
+
+It also carries a product question the other arms do not. Extracted text **cannot
+hallucinate**. Under a "no garbage to customer" constraint, a system that gets the
+form wrong but the facts right is a different kind of object from one that is
+fluent and sometimes false — and ours is currently the second kind.
+
+**Interpreting arm B:**
 
 - **B clearly beats ours** -> the bottleneck is pretraining quality. 2.1B tokens
   from scratch was not enough, and the answer is a better base model (or starting
@@ -44,6 +55,28 @@ same data and the same evaluation, and see where they land.
   support abstractive summarisation of 2000-token multi-party threads at any size
   in this range — and it would redirect effort from generation towards extraction,
   templating, and the quality gate.
+
+## What we are looking for, restated after arm A
+
+The original framing was a single quality axis: does a public model land above or
+below ours. Arm A broke that framing, because it fails in a way that is not
+"worse" but *different* — it transcribes where ours fabricates. So the thing to
+measure is **which failure mode** a system has, not only how much it fails:
+
+| | extractiveness | failure |
+|---|---|---|
+| reference (gpt-4.1-mini) | 0.06 | — |
+| arm L, lead | 1.00 | right facts, wrong form; no role attribution |
+| arm A, bart-large-cnn | 0.77 | transcribes the lead, keeps the footer, fabricates relations |
+| ours, 90.7M | TBD | invents entities absent from the source |
+
+These are three different points — transcription, correct abstraction, untethered
+abstraction — not three positions on one line. A grader's A/B/C cannot separate
+the first from the second, because a fluent copy and a fluent abstraction both
+read as "a sentence"; that is why `measure.py` exists.
+
+The practical question this opens: if arm L has the facts and ours has the form,
+the shortest path to a shippable system may be neither of them alone.
 
 ## Why NOT t5-small
 
