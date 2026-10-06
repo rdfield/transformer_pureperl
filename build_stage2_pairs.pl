@@ -36,6 +36,17 @@
 #  4. TRUNCATED — finish_reason 'length' means the summary was cut off mid
 #     sentence. Training on half a sentence teaches half sentences.
 #
+#  5. SOURCE OVER THE TOKEN BUDGET — the summary was generated from the FULL
+#     email, but training truncates the source at --email_budget. Any pair whose
+#     source exceeds that budget teaches the model that facts may appear in a
+#     summary without being present in the input: precisely the hallucination
+#     being cured. This MUST be counted in tokens, not bytes. Capping the
+#     sampler at 8000 bytes was supposed to keep sources under 2048 tokens on a
+#     ~4.24 bytes/token average, but dense BOM listings tokenise nearer 1.8
+#     bytes/token and 9.3% of pairs came out truncated (max 4,361 tokens). It
+#     surfaced only in the trainer's startup line. A byte proxy is not a token
+#     budget.
+#
 # After these, the residual C rate in the graded sample was ~1 in 40 (2.5%),
 # which is ordinary training-set noise.
 #
@@ -54,10 +65,12 @@ use MIME::Base64 qw(decode_base64);
 use ML::Tokeniser;
 
 my $MIN_CHARS = 25;    # see the note below — 100 was wrong
+my $MAX_SRC   = 2048;  # source token budget; see note 5
 my $MAX_NAMES = 8;
 my $SEP       = 16003;
 my $REPORT    = 0;
 GetOptions('min-chars=i' => \$MIN_CHARS, 'max-names=i' => \$MAX_NAMES,
+           'max-src-tokens=i' => \$MAX_SRC,
            'sep=i' => \$SEP, 'report-only' => \$REPORT) or die usage();
 
 my $model  = shift @ARGV or die usage();
@@ -88,7 +101,7 @@ open my $gf, '<', $gen or die "$gen: $!";
 my $ofh;
 unless ($REPORT) { open $ofh, '>', $out or die "$out: $!" }
 
-my ($n, $kept, $n_ref, $n_short, $n_names, $n_trunc, $n_nosrc) = (0) x 7;
+my ($n, $kept, $n_ref, $n_short, $n_names, $n_trunc, $n_nosrc, $n_long) = (0) x 8;
 my ($tok_src, $tok_sum) = (0, 0);
 my @examples;
 while (my $r = $csv->getline($gf)) {
@@ -109,6 +122,7 @@ while (my $r = $csv->getline($gf)) {
    my $sids = $tok->encode(text => $body);
    my $tids = $tok->encode(text => $s);
    next unless @$sids && @$tids;
+   if ($MAX_SRC && @$sids > $MAX_SRC) { $n_long++; next; }
    $kept++; $tok_src += scalar @$sids; $tok_sum += scalar @$tids;
    print $ofh join(',', @$sids) . ",$SEP," . join(',', @$tids) . "\n" unless $REPORT;
 }
@@ -123,6 +137,8 @@ say sprintf("  refusal         %6d  %s", $n_ref,   $pc->($n_ref));
 say sprintf("  truncated       %6d  %s  (finish_reason length)", $n_trunc, $pc->($n_trunc));
 say sprintf("  under %3d chars %6d  %s", $MIN_CHARS, $n_short, $pc->($n_short));
 say sprintf("  >=%d names      %6d  %s  (recipient-list dumps)", $MAX_NAMES, $n_names, $pc->($n_names));
+say sprintf("  src >%d tok   %6d  %s  (summary was made from text the model cannot see)",
+            $MAX_SRC, $n_long, $pc->($n_long)) if $MAX_SRC;
 say sprintf("  no source       %6d  %s", $n_nosrc, $pc->($n_nosrc)) if $n_nosrc;
 say "kept:";
 say sprintf("  %6d pairs  %s", $kept, $pc->($kept));
@@ -139,5 +155,5 @@ say $REPORT ? "\n(report only — nothing written)" : "\nwrote $out";
 sub b64 { my $t = decode_base64(shift); utf8::decode($t); return $t }
 sub usage {
    return "usage: $0 vocab.model sample.csv gen.csv pairs.txt " .
-          "[--min-chars 100] [--max-names 8] [--report-only]\n";
+          "[--min-chars 25] [--max-names 8] [--max-src-tokens 2048] [--report-only]\n";
 }
