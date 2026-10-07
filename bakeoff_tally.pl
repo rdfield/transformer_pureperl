@@ -53,7 +53,19 @@ open my $gfh, '<', $grades or die "$grades: $!";
 while (my $l = <$gfh>) {
    $l =~ s/#.*//;
    next unless $l =~ /\S/;
-   my ($id, @pairs) = split ' ', $l;
+   # Only consider lines that actually carry a grade. Without this, running the
+   # tally on a filled-in bundle warns once per line of every email body quoted
+   # in it -- 1,075 warnings on a 20-thread sheet, burying the real ones.
+   next unless $l =~ /\d+\s*=\s*[ABCabc]\b/;
+
+   my @f = split ' ', $l;
+   # bakeoff_bundle.pl writes "GRADES <id>: 1=A 2=B" with a SPACE after the
+   # keyword, so the keyword and the id are SEPARATE fields. Taking field 0 as
+   # the id strips it to an empty string and every thread then looks unknown --
+   # which made filling in the sheet directly, the obvious workflow, fail with
+   # "nothing to tally". Accept "GRADES <id>:", "GRADES<id>:" and a bare "<id>".
+   shift @f if @f && $f[0] =~ /^GRADES$/i;
+   my ($id, @pairs) = @f;
    $id =~ s/^GRADES//i; $id =~ s/[:,]$//;
    unless (exists $map{$id}) { push @warn, "grades mention unknown thread $id"; next }
    $seen_thread{$id}++;
