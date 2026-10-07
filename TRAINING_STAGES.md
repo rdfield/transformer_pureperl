@@ -239,8 +239,72 @@ explain the observed rate, which supports the Enron-bleed diagnosis instead.
 Within-thread dedup (40.5% of body text is duplicated lines) would *recover* those
 pairs rather than dropping them.
 
-**Success criterion: do the Enron names disappear from a regenerated sample?**
-Not accuracy.
+**Success criterion was: do the Enron names disappear?** They did.
+
+### Result — COMPLETE, 12 epochs, new best on every one (never early-stopped)
+
+| | direct client FT (Stage A, failed) | Stage 2 | **Stage 3** |
+|---|---|---|---|
+| val_loss | — | 1.8704 | **1.4978** |
+| val_tok_acc | 63.4% | 62.0% | **67.4%** |
+| conditioning signal | 25.7% | 28.1% | **34.2%** |
+| loss gap | — | +1.2921 | **+1.4325** |
+
+Previous best val_loss by any client fine-tune was 2.0207, so this is 0.52 nats
+better — roughly a 41% cut in perplexity. Train/val crossed at epoch 4 and the
+gap reached +0.37 by the end, the familiar data-limited signature on 8k pairs,
+but val_loss kept setting new bests so `--patience 3` never fired.
+
+**The Enron bleed is gone.** Names appearing in the same 40 generations:
+
+| | Enron-name hits |
+|---|---|
+| Stage 2 | Kean, Hansen, Krecek, Guerrero, [client-name] |
+| **Stage 3** | **[client-name] only** |
+
+[client-name] is the one that was never Enron bleed — a genuine client name (757 uses in
+the corpus) attached to the wrong thread. That residual "wrong client person" error
+is what remains.
+
+Audit: PASS, conditioning 0.27 -> **0.33**, diversity 0.91, opening var 0.85
+(both down slightly from Stage 2's 0.96/0.97 — output is wordier and more
+templated).
+
+### Identifiers: the repair pass is where the win lands
+
+    perl repair_identifiers.pl /tmp/s3_pairs.csv /tmp/s3_gen.csv /tmp/s3_rep.csv
+    perl measure_identifiers.pl /tmp/s3_pairs.csv /tmp/s3_gen.csv /tmp/s3_rep.csv
+
+| | ids | exact | drift | invented | covered |
+|---|---|---|---|---|---|
+| teacher | 29 | 96.6% | 0.0% | 3.4% | 13.6% |
+| Stage 3 raw | 27 | 59.3% | 25.9% | 14.8% | 7.8% |
+| **Stage 3 + repair** | 26 | **80.8%** | **3.8%** | 15.4% | **10.2%** |
+| *best before (Stage A + repair)* | | *68.9%* | | | |
+
+**Drift is repairable, invention is not.** Stage 3 moved errors out of invention
+and into drift, which reads as a regression on raw exact-rate (65.2% -> 59.3% vs
+Stage 2) and is actually the better outcome, because repair then has something to
+match. 80.8% against a previous best of 68.9%.
+
+This confirms the split: **the model selects, copying renders.** It also shrinks
+the case for constrained decoding further — that was estimated at +4.5pp over
+repair using Stage A's buckets, and repair alone now reaches 80.8%.
+
+### New failure introduced: within-sentence degeneration
+
+    Helena from Orange is asking Helena to confirm...
+    whether an an APAC distributor is needed...
+    (1 World Wide Way, 1 World Wide Way, Maland Heights, MO 63146)
+
+Self-reference, doubled words, duplicated address fragments. **Invisible to both
+instruments**: `audit_generations.pl` measures 4-grams and reports
+`within-seq repeats 0.000`, and `--no_repeat_ngram 3` cannot catch a single-token
+repeat — the same blind spot found during the sticky-copy work. Needs a
+decode-time guard, not more training.
+
+Stage 3 also lost an identifier Stage 2 had exactly right (`307423`), consistent
+with the wordier output.
 
 ---
 
