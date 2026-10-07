@@ -135,6 +135,26 @@ Consequences:
   may not reproduce them exactly. Its generations are preserved in
   `out/A_bart_large_cnn.jsonl`, so the *measurements* stand regardless.
 
+### Why there is no separate frozen env
+
+`conda create -n hfbase --clone fastbook` was tried and **produces a corrupt
+environment**, so don't. `fastbook` is a conda/pip hybrid — pip installed torch
+2.14.1 over conda's 2.5.1 — and `--clone` only faithfully reproduces what *conda*
+tracks. The result had two package records for the same import
+(`torch-2.14.1.dist-info` from pip beside `torch-2.5.1-py3.12.egg-info` from
+conda), imported 2.5.1 while claiming 2.14.1, and had a broken `pip`. It was
+deleted.
+
+`requirements-lock.txt` is the reproducibility record instead — a `pip freeze` of
+the working stack. To rebuild a clean, independent env:
+
+    conda create -n hfbase python=3.12 -y
+    conda activate hfbase
+    pip install -r requirements-lock.txt
+
+That downloads ~10 GB (torch + the CUDA 13 wheels), so it is worth doing only
+when `fastbook` actually breaks these scripts, not pre-emptively.
+
 **Check the installed version before trusting any command here**, and use
 `dataclasses.fields(Seq2SeqTrainingArguments)` rather than
 `inspect.signature(...)` to discover accepted arguments — in 5.x the generated
