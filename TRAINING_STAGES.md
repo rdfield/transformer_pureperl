@@ -60,14 +60,31 @@ out-of-range ids. **Run it before any long pretrain.**
 **Corpus** `anneal.train` — 168,038 docs, **210,759,410 tokens**, 881,839 windows.
 **Init** `d768_1.7B_3` **Output** `d768_annealed.safetensors`
 
+Objective is the pretrain's full-window LM at seq 256/240, **not** the enc-dec
+pair format. One epoch, 110,229 batches, **20,888s (5.80h)**, 42-52 windows/s.
+
 **Result: val_loss 0.7293, val_tok_acc 86.1%, conditioning signal 77.6%**
-(shuf_loss 4.3009, gap +3.5666). One epoch, 20,888s (5.8h), lr 0.000030, gnorm 0.65.
+(shuf_loss 4.3009, gap +3.5666), gnorm 0.65 throughout.
+LR decayed **0.000050 -> 0.000030** across the epoch.
 
 That 77.6% is the calibration point for the whole project: it is what "the encoder
-is fully engaged" looks like.
+is fully engaged" looks like. **But it is a PRETRAIN property, not an anneal one** —
+the signal was 77.3% at the first eval and 77.6% at the last, never leaving
+77.3-77.7%. The anneal did not build the conditioning; it was already there.
+
+**The anneal barely moved anything.** Train loss 0.7015 -> 0.6793 over the whole
+epoch, val_loss 0.7458 -> 0.7293. Five hours and fifty minutes for 0.016 of
+val_loss: the model was converged before it started. And the best checkpoint
+landed at **90.9%**, with the final 100% eval *worse* (0.7325), so the last tenth
+was counterproductive.
+
+Eval cost: 11 evaluations x ~171s = 1,881s = **9.0%** of the run. (Not the 17% I
+claimed elsewhere — that figure was the throughput drop from 52 to 43 windows/s
+after the first eval, which is a separate effect and may be thermal.)
 
 **RECONSTRUCTED:** as Stage 0 plus `--init d768_1.7B_3.safetensors`,
-`--train $P/anneal.train`, `--lr 0.00003`, `--epochs 1`.
+`--train $P/anneal.train`, `--lr 0.00005`, `--epochs 1`,
+`--evals_per_epoch 11`.
 
 ---
 
