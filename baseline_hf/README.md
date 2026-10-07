@@ -111,10 +111,35 @@ model's output as the other arm. Same val set, same rubric, same blinding.
 
 ## Setup
 
-Uses the existing `fastbook` conda env (torch 2.2.0 + CUDA, transformers 4.37.2,
-sentencepiece). Nothing new was installed.
+The existing `fastbook` conda env:
 
     PY=/home/mvine/miniconda3/envs/fastbook/bin/python
+
+**THE ENV CHANGED MID-EXPERIMENT. The two arms did not run on the same stack.**
+
+| | transformers | torch |
+|---|---|---|
+| arm A + the lead baseline (2026-10-06) | **4.37.2** | **2.2.0+cu121** |
+| arm B (2026-10-07) | **5.18.0** | **2.14.1+cu130** |
+
+Nothing in this directory caused the upgrade; it happened between the two runs.
+Consequences:
+
+- `evaluation_strategy` was renamed `eval_strategy`, and `warmup_ratio` was
+  dropped in favour of `warmup_steps` only. `finetune_bart.py` now detects which
+  names the installed version accepts rather than hard-coding either.
+- `accelerate` (1.15.0) had to be installed — transformers 5.x `Trainer`
+  requires >=1.1.0 and the env had none. **That is the only package this
+  directory installed.**
+- Arm A's numbers are reproducible only under 4.37.2. Re-running it on 5.18.0
+  may not reproduce them exactly. Its generations are preserved in
+  `out/A_bart_large_cnn.jsonl`, so the *measurements* stand regardless.
+
+**Check the installed version before trusting any command here**, and use
+`dataclasses.fields(Seq2SeqTrainingArguments)` rather than
+`inspect.signature(...)` to discover accepted arguments — in 5.x the generated
+`__init__` is narrower than the dataclass, so a signature check reports
+`warmup_ratio` as present and the constructor then rejects it.
 
 Input data is the **decoded text** of the client pairs, not the BPE ids, because
 BART has its own tokeniser. `prepare_data.py` drives the project's Perl tokeniser

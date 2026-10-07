@@ -29,10 +29,29 @@ import json
 import os
 import sys
 
+import dataclasses
+import math
+
 import torch
 from transformers import (AutoTokenizer, AutoModelForSeq2SeqLM,
                           DataCollatorForSeq2Seq, EarlyStoppingCallback,
                           Seq2SeqTrainer, Seq2SeqTrainingArguments)
+
+
+def arg_names():
+    """The field names Seq2SeqTrainingArguments actually accepts.
+
+    USE dataclasses.fields(), NOT inspect.signature(). In transformers 5.x the
+    generated __init__ exposes a NARROWER set than the dataclass declares, so a
+    signature check reports `warmup_ratio: present` and the constructor then
+    rejects it. That cost a run.
+
+    This is checked at runtime rather than pinned because the env changed under
+    this script mid-project: it was written against transformers 4.37.2 / torch
+    2.2.0 and first ran under 5.18.0 / torch 2.14.1, which renamed
+    `evaluation_strategy` -> `eval_strategy` and dropped `warmup_ratio`.
+    """
+    return {f.name for f in dataclasses.fields(Seq2SeqTrainingArguments)}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -100,6 +119,21 @@ def main():
     va = Pairs(args.val_file, tok, args.max_in, args.max_out)
     print(f"train {len(tr)} pairs, val {len(va)} pairs")
 
+    have = arg_names()
+
+    # warmup: 6% of optimiser steps. Expressed as a RATIO in 4.x, steps-only in
+    # 5.x, so compute the steps and use whichever the installed version takes.
+    steps_per_epoch = max(1, math.ceil(len(tr) / args.batch / args.accum))
+    total_steps = int(steps_per_epoch * args.epochs)
+    warm = max(1, int(0.06 * total_steps))
+    print(f"schedule: {steps_per_epoch} opt-steps/epoch x {args.epochs} "
+          f"= {total_steps} total, {warm} warmup (6%)")
+
+    sched = {"warmup_steps": warm} if "warmup_steps" in have else {"warmup_ratio": 0.06}
+    evalkey = "eval_strategy" if "eval_strategy" in have else "evaluation_strategy"
+    print(f"transformers {__import__('transformers').__version__}: "
+          f"using {list(sched)[0]}, {evalkey}")
+
     targs = Seq2SeqTrainingArguments(
         output_dir=args.out,
         num_train_epochs=args.epochs,
@@ -107,8 +141,8 @@ def main():
         per_device_train_batch_size=args.batch,
         per_device_eval_batch_size=args.batch,
         gradient_accumulation_steps=args.accum,
-        warmup_ratio=0.06,
-        evaluation_strategy="epoch",   # 4.37.2 spelling; renamed eval_strategy in 4.46+
+        **sched,
+        **{evalkey: "epoch"},
         save_strategy="epoch",
         save_total_limit=1,
         load_best_model_at_end=True,
