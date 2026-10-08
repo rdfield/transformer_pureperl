@@ -157,6 +157,10 @@ def main():
         # difference WAS the entire residual: 1.225e-05 vs 3.440e-13.
         "cfg.ln_eps": torch.tensor([float(layer.self_attn_layer_norm.eps)],
                                    dtype=torch.float64),
+        # 0 = relu, 1 = gelu — matches MLPositionwiseFeedForward::ACT_*
+        "cfg.activation": torch.tensor(
+            [0.0 if cfg.activation_function == "relu" else 1.0],
+            dtype=torch.float64),
     }
 
     # The FFN's LayerNorm is the LAST residual in the block, so it is rc2 in an
