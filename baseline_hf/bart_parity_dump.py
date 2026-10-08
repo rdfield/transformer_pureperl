@@ -70,6 +70,50 @@ def dump_whole_encoder(args):
     return
 
 
+def dump_whole_model(args):
+    """src ids + decoder input ids -> logits. Weights come from the converted
+    checkpoint on the C++ side."""
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model).eval().double()
+    V = model.config.vocab_size
+    torch.manual_seed(1234)
+    # steer clear of the specials (0..3) and <mask> (50264)
+    src = torch.randint(4, V - 2, (args.batch, args.seq_enc))
+    tgt = torch.randint(4, V - 2, (args.batch, args.seq))
+    with torch.no_grad():
+        # attention_mask here is the MODEL-level convention: 1 = keep, 0 = pad,
+        # the opposite polarity to the additive layer-level mask. All ones means
+        # the encoder attends everywhere. No decoder_attention_mask is passed:
+        # BartModel applies decoder causality itself, which our side matches
+        # with an explicit causal tgt_mask.
+        r = model(input_ids=src,
+                  attention_mask=torch.ones_like(src),
+                  decoder_input_ids=tgt,
+                  output_hidden_states=True)
+        out = r.logits
+        # the decoder's last hidden state, to bisect decoder-vs-head if the
+        # logits disagree by more than fp32 accounts for
+        dec_h = r.decoder_hidden_states[-1]
+    save_file({
+        "input_ids":   src.to(torch.float64).contiguous(),
+        "input":       src.to(torch.float64).contiguous().clone(),
+        "decoder_input_ids": tgt.to(torch.float64).contiguous(),
+        "output_ref":  out.detach().to(torch.float64).contiguous(),
+        "decoder_hidden_ref": dec_h.detach().to(torch.float64).contiguous(),
+        "cfg.batch":   torch.tensor([float(args.batch)], dtype=torch.float64),
+        "cfg.seq":     torch.tensor([float(args.seq)], dtype=torch.float64),
+        "cfg.seq_enc": torch.tensor([float(args.seq_enc)], dtype=torch.float64),
+        "cfg.embeddings": torch.tensor([float(model.config.d_model)], dtype=torch.float64),
+        "cfg.num_heads":  torch.tensor([float(model.config.encoder_attention_heads)], dtype=torch.float64),
+        "cfg.d_ff":       torch.tensor([float(model.config.encoder_ffn_dim)], dtype=torch.float64),
+        "cfg.whole_model": torch.tensor([1.0], dtype=torch.float64),
+    }, args.out)
+    print(f"WHOLE MODEL: src {tuple(src.shape)} tgt {tuple(tgt.shape)} "
+          f"-> logits {tuple(out.shape)}  |logits| {out.norm():.4f}")
+    print(f"wrote {args.out}")
+    print(f"\n  ./build-bias/test_bart_parity {args.out} --ckpt /tmp/bart_init.safetensors")
+    return
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="facebook/bart-base")
@@ -87,6 +131,13 @@ def main():
                          "CONVERTED checkpoint, so embeddings, the position offset, "
                          "layernorm_embedding and the absent final norm are all in "
                          "scope -- none of which single-layer parity can see.")
+    ap.add_argument("--whole-model", action="store_true",
+                    help="dump the WHOLE model: source ids + decoder input ids "
+                         "in, LOGITS out. Covers both embedding tables, both "
+                         "position tables, both layernorm_embeddings, all 12 "
+                         "blocks, cross-attention at model level, the absent "
+                         "final norms AND the tied head -- the last of which "
+                         "nothing else tests.")
     ap.add_argument("--causal", action="store_true",
                     help="--decoder only: use a real causal self-attention mask "
                          "instead of all-visible. Prove the mapping bidirectionally "
@@ -105,6 +156,8 @@ def main():
 
     if args.whole_encoder:
         return dump_whole_encoder(args)
+    if args.whole_model:
+        return dump_whole_model(args)
     kw = {"activation_function": "relu"} if args.relu else {}
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model, **kw)
     # eval() is LOAD-BEARING: BART has dropout 0.1 on three paths inside this
