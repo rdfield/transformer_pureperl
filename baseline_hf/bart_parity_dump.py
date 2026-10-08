@@ -37,6 +37,39 @@ from transformers import AutoModelForSeq2SeqLM
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+def dump_whole_encoder(args):
+    """Token ids -> encoder last_hidden_state. Weights come from the converted
+    checkpoint on the C++ side, so this tests the ARTEFACT that will be trained
+    rather than a mapping done twice."""
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model).eval().double()
+    enc = model.model.encoder
+    torch.manual_seed(99)
+    V = model.config.vocab_size
+    # avoid the specials (0,1,2,3) and <mask> (50264) so nothing is special-cased
+    ids = torch.randint(4, V - 2, (args.batch, args.seq))
+    with torch.no_grad():
+        out = enc(input_ids=ids).last_hidden_state
+    save_file({
+        "input_ids":  ids.to(torch.float64).contiguous(),
+        # also as "input": the generic path in test_bart_parity loads B.at("input")
+        # before it reaches the whole-encoder branch, and these are token ids
+        # rather than activations so the name differs.
+        "input":      ids.to(torch.float64).contiguous().clone(),
+        "output_ref": out.detach().to(torch.float64).contiguous(),
+        "cfg.batch":  torch.tensor([float(args.batch)], dtype=torch.float64),
+        "cfg.seq":    torch.tensor([float(args.seq)], dtype=torch.float64),
+        "cfg.embeddings": torch.tensor([float(model.config.d_model)], dtype=torch.float64),
+        "cfg.num_heads":  torch.tensor([float(model.config.encoder_attention_heads)], dtype=torch.float64),
+        "cfg.d_ff":       torch.tensor([float(model.config.encoder_ffn_dim)], dtype=torch.float64),
+        "cfg.whole_encoder": torch.tensor([1.0], dtype=torch.float64),
+    }, args.out)
+    print(f"WHOLE ENCODER: ids {tuple(ids.shape)} -> {tuple(out.shape)}  "
+          f"|out| {out.norm():.4f}")
+    print(f"wrote {args.out}")
+    print("\n  ./build-bias/test_bart_parity " + args.out + " --ckpt /tmp/bart_init.safetensors")
+    return
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="facebook/bart-base")
@@ -48,6 +81,12 @@ def main():
                          "S_ENC != S_TGT on purpose -- at equal lengths a wrong "
                          "contraction length is invisible, which is how the "
                          "2026-09-03 cross-attn dWk/dWv bug hid.")
+    ap.add_argument("--whole-encoder", action="store_true",
+                    help="dump the WHOLE encoder: token ids in, last_hidden_state "
+                         "out, no weights. Pair with test_bart_parity --whole on a "
+                         "CONVERTED checkpoint, so embeddings, the position offset, "
+                         "layernorm_embedding and the absent final norm are all in "
+                         "scope -- none of which single-layer parity can see.")
     ap.add_argument("--causal", action="store_true",
                     help="--decoder only: use a real causal self-attention mask "
                          "instead of all-visible. Prove the mapping bidirectionally "
@@ -64,6 +103,8 @@ def main():
                          "function and any error is the mapping alone.")
     args = ap.parse_args()
 
+    if args.whole_encoder:
+        return dump_whole_encoder(args)
     kw = {"activation_function": "relu"} if args.relu else {}
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model, **kw)
     # eval() is LOAD-BEARING: BART has dropout 0.1 on three paths inside this
