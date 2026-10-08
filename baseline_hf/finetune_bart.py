@@ -104,6 +104,20 @@ def main():
     ap.add_argument("--max-in", type=int, default=1024)
     ap.add_argument("--max-out", type=int, default=160, help="our --summary_budget is 224")
     ap.add_argument("--patience", type=int, default=3)
+    ap.add_argument("--activation", default="",
+                    help="Override the checkpoint's activation, e.g. 'relu'. "
+                         "DEFAULT IS EMPTY = use what the model was pretrained "
+                         "with, which for BART is the exact-erf gelu.\n"
+                         "Why this exists: our C++ stack has ReLU, not GELU, and "
+                         "porting BART's weights into it would need two new "
+                         "kernels. Feeding GELU-trained weights through ReLU "
+                         "changes layer-0 output by 40.4% relative L2 (half of "
+                         "all pre-activations are negative and ReLU zeroes every "
+                         "one), so for a straight weight load GELU is mandatory. "
+                         "But FINE-TUNING may be able to adapt the weights to "
+                         "ReLU, and if it can, the port needs no GELU at all. "
+                         "This flag runs that experiment. It is NOT the control "
+                         "— compare its A-rate against the default run's.")
     ap.add_argument("--need-gb", type=float, default=6.0)
     ap.add_argument("--force", action="store_true", help="skip the VRAM guard")
     args = ap.parse_args()
@@ -112,7 +126,14 @@ def main():
         guard_vram(args.need_gb)
 
     tok = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.model)
+    # Default: NO override, so the checkpoint runs the activation it was
+    # pretrained with. --activation exists for one specific experiment, below.
+    kw = {"activation_function": args.activation} if args.activation else {}
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model, **kw)
+    if args.activation:
+        print(f"ACTIVATION OVERRIDDEN to {args.activation} — this is NOT the "
+              f"control configuration; results are not comparable to the "
+              f"default run.")
     print(f"{args.model}: {sum(p.numel() for p in model.parameters())/1e6:.1f}M parameters")
 
     tr = Pairs(args.train_file, tok, args.max_in, args.max_out)

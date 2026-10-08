@@ -11,3 +11,4 @@ B_bart_base/
 *.safetensors
 *.bin
 .decode.pl
+bart_layer0.safetensors
