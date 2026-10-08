@@ -117,11 +117,16 @@ def main():
         "cfg.d_ff":       torch.tensor([float(FF)], dtype=torch.float64),
         "cfg.batch":      torch.tensor([float(args.batch)], dtype=torch.float64),
         "cfg.seq":        torch.tensor([float(args.seq)],   dtype=torch.float64),
+        # BART's LayerNorm epsilon (1e-5). Ours defaults to 1e-6, and that one
+        # difference WAS the entire residual: 1.225e-05 vs 3.440e-13.
+        "cfg.ln_eps": torch.tensor([float(layer.self_attn_layer_norm.eps)],
+                                   dtype=torch.float64),
     }
     save_file(out, args.out)
 
     print(f"{args.model} layer {args.layer}: d={E} heads={H} d_ff={FF} "
-          f"activation={cfg.activation_function}")
+          f"activation={cfg.activation_function} "
+          f"ln_eps={layer.self_attn_layer_norm.eps}")
     print(f"input {tuple(x.shape)}  output {tuple(y.shape)}  "
           f"|input| {x.norm():.4f}  |output| {y.norm():.4f}")
     print(f"wrote {args.out}  ({len(out)} tensors, all F64)")
