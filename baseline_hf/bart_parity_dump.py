@@ -41,6 +41,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="facebook/bart-base")
     ap.add_argument("--layer", type=int, default=0)
+    ap.add_argument("--decoder", action="store_true",
+                    help="dump a DECODER layer instead: 26 tensors (the "
+                         "encoder_attn/cab set and a third LayerNorm), plus a "
+                         "second input for cross-attention to read. Uses "
+                         "S_ENC != S_TGT on purpose -- at equal lengths a wrong "
+                         "contraction length is invisible, which is how the "
+                         "2026-09-03 cross-attn dWk/dWv bug hid.")
+    ap.add_argument("--causal", action="store_true",
+                    help="--decoder only: use a real causal self-attention mask "
+                         "instead of all-visible. Prove the mapping bidirectionally "
+                         "FIRST, then turn this on to test the mask convention.")
+    ap.add_argument("--seq-enc", type=int, default=11,
+                    help="encoder length, --decoder only (target stays --seq)")
     ap.add_argument("--batch", type=int, default=2)
     ap.add_argument("--seq", type=int, default=8)
     ap.add_argument("--out", default=os.path.join(HERE, "bart_layer0.safetensors"))
@@ -56,14 +69,39 @@ def main():
     # eval() is LOAD-BEARING: BART has dropout 0.1 on three paths inside this
     # layer, and in training mode the reference would differ every run.
     model = model.eval().double()
-    layer = model.model.encoder.layers[args.layer]
+    layer = (model.model.decoder if args.decoder else model.model.encoder).layers[args.layer]
     cfg = model.config
     E, H, FF = cfg.d_model, cfg.encoder_attention_heads, cfg.encoder_ffn_dim
 
     torch.manual_seed(1234)
     x = torch.randn(args.batch, args.seq, E, dtype=torch.float64)
+    enc_out = None
     with torch.no_grad():
-        y = layer(x, attention_mask=None)
+        if args.decoder:
+            enc_out = torch.randn(args.batch, args.seq_enc, E, dtype=torch.float64)
+            # DO NOT pass attention_mask=None here. The decoder's self_attn has
+            # is_causal=True and the attn implementation is sdpa, so PyTorch
+            # applies causal masking INTERNALLY when no mask is given -- the
+            # reference comes out causal while our all-visible tgt_mask is
+            # bidirectional. Measured: that alone is 7.09e-01 of error, which
+            # is exactly what the first decoder parity run reported.
+            #
+            # So pass an EXPLICIT all-visible additive mask (0 = visible,
+            # -inf = masked), which overrides the internal causal path and
+            # makes both sides bidirectional. That isolates the weight mapping.
+            # --causal instead builds the real causal mask, for testing the
+            # mask convention once the mapping is proven.
+            if args.causal:
+                m = torch.full((args.batch, 1, args.seq, args.seq),
+                               float("-inf"), dtype=torch.float64).triu(1)
+            else:
+                m = torch.zeros(args.batch, 1, args.seq, args.seq, dtype=torch.float64)
+            # use_cache defaults to True in the 5.x signature -- off, no KV cache.
+            y = layer(x, attention_mask=m,
+                      encoder_hidden_states=enc_out,
+                      encoder_attention_mask=None, use_cache=False)
+        else:
+            y = layer(x, attention_mask=None)
     # transformers 4.x returned a TUPLE here, 5.x returns a bare Tensor. Writing
     # `[0]` unconditionally silently indexes the BATCH on 5.x and hands you a
     # [S,E] "reference" that the C++ side would then be compared against. Caught
@@ -77,7 +115,7 @@ def main():
     T   = lambda n: f64(sd[n].T)                 # [out,in] -> [in,out]
     col = lambda n: f64(sd[n].reshape(-1, 1))    # [E] -> [E,1], our bias/LN shape
 
-    P = "enc.block_0"
+    P = "dec.block_0" if args.decoder else "enc.block_0"
     out = {
         "input":      f64(x),
         "output_ref": f64(y),
@@ -108,8 +146,6 @@ def main():
         # order BART applies them, since both compute LN(sublayer(x) + x).
         f"{P}.rc1.ln.gamma": col("self_attn_layer_norm.weight"),
         f"{P}.rc1.ln.beta":  col("self_attn_layer_norm.bias"),
-        f"{P}.rc2.ln.gamma": col("final_layer_norm.weight"),
-        f"{P}.rc2.ln.beta":  col("final_layer_norm.bias"),
 
         # config the C++ side needs, as 1-element tensors
         "cfg.embeddings": torch.tensor([float(E)],  dtype=torch.float64),
@@ -122,11 +158,35 @@ def main():
         "cfg.ln_eps": torch.tensor([float(layer.self_attn_layer_norm.eps)],
                                    dtype=torch.float64),
     }
+
+    # The FFN's LayerNorm is the LAST residual in the block, so it is rc2 in an
+    # encoder block (self-attn, ff) and rc3 in a decoder block (self-attn,
+    # cross-attn, ff). Getting this wrong would load BART's FFN norm over its
+    # cross-attention norm and vice versa -- plausible shapes, wrong model.
+    last_rc = "rc3" if args.decoder else "rc2"
+    out[f"{P}.{last_rc}.ln.gamma"] = col("final_layer_norm.weight")
+    out[f"{P}.{last_rc}.ln.beta"]  = col("final_layer_norm.bias")
+
+    if args.decoder:
+        out["encoder_output"] = f64(enc_out)
+        out["cfg.seq_enc"] = torch.tensor([float(args.seq_enc)], dtype=torch.float64)
+        out["cfg.causal"]  = torch.tensor([1.0 if args.causal else 0.0], dtype=torch.float64)
+        for ours, theirs in (("q", "q"), ("k", "k"), ("v", "v"), ("o", "out")):
+            out[f"{P}.cab.W_{ours}"] = T(f"encoder_attn.{theirs}_proj.weight")
+            out[f"{P}.cab.b_{ours}"] = col(f"encoder_attn.{theirs}_proj.bias")
+            # the un-transposed copy, so the C++ side's second pass has
+            # something to load for cross-attention too
+            out[f"alt.{P}.cab.W_{ours}"] = f64(sd[f"encoder_attn.{theirs}_proj.weight"])
+        out[f"{P}.rc2.ln.gamma"] = col("encoder_attn_layer_norm.weight")
+        out[f"{P}.rc2.ln.beta"]  = col("encoder_attn_layer_norm.bias")
+
     save_file(out, args.out)
 
     print(f"{args.model} layer {args.layer}: d={E} heads={H} d_ff={FF} "
           f"activation={cfg.activation_function} "
           f"ln_eps={layer.self_attn_layer_norm.eps}")
+    print(f"{'DECODER' if args.decoder else 'ENCODER'} layer"
+          + (f"  encoder_output {tuple(enc_out.shape)}" if args.decoder else ""))
     print(f"input {tuple(x.shape)}  output {tuple(y.shape)}  "
           f"|input| {x.norm():.4f}  |output| {y.norm():.4f}")
     print(f"wrote {args.out}  ({len(out)} tensors, all F64)")
