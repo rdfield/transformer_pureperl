@@ -67,9 +67,9 @@ def main():
     if n_enc != cfg.encoder_layers or n_dec != cfg.decoder_layers:
         raise SystemExit(f"skeleton has {n_enc}+{n_dec} layers, BART has "
                          f"{cfg.encoder_layers}+{cfg.decoder_layers} -- rebuild it")
-    if SE > cfg.max_position_embeddings:
-        raise SystemExit(f"skeleton seq_enc {SE} exceeds BART's "
-                         f"{cfg.max_position_embeddings} learned positions")
+    MAXP = cfg.max_position_embeddings
+    if SE > MAXP:
+        print(f"  position EXTENSION: {MAXP} -> {SE} by tiling (see note below)")
 
     out = dict(skel)
     took = []
@@ -98,9 +98,26 @@ def main():
     put("emb_src.emb.weights", sd["model.shared.weight"])
     put("emb_tgt.emb.weights", sd["model.shared.weight"])
 
-    # ---- positions: drop BART's 2-row offset, then take what fits
+    # ---- positions: drop BART's 2-row offset, then take (or tile to) what fits
+    #
+    # BART has only 1024 learned positions. Asking for more means CREATING the
+    # extra rows, and tiling is the choice here: position 1024 reuses position
+    # 0's embedding, 1025 reuses 1's, and so on. Absolutely wrong, but it
+    # preserves LOCAL structure -- neighbouring positions stay neighbours in
+    # embedding space, which is most of what attention uses positions for.
+    # Interpolating instead would preserve global order while halving the
+    # resolution of the learned signal; leaving the tail random would start the
+    # long threads untrained, and the long threads are the whole reason for
+    # extending. The rows are trainable (position_kind = POS_LEARNED), so
+    # fine-tuning adapts them rather than being stuck with the seam.
     for side, src, n in (("pos_src", "encoder", SE), ("pos_tgt", "decoder", ST)):
-        pe = sd[f"model.{src}.embed_positions.weight"][OFFSET:OFFSET + n]
+        pe = sd[f"model.{src}.embed_positions.weight"][OFFSET:]      # drop the offset
+        if n > pe.shape[0]:
+            reps = -(-n // pe.shape[0])                              # ceil
+            pe = pe.repeat(reps, 1)[:n]
+            print(f"    {side}: tiled {reps}x to {n} positions")
+        else:
+            pe = pe[:n]
         put(f"{side}.position_embeds", pe.reshape(1, n, D))
         put(f"{side}.ln_emb.gamma", col(f"model.{src}.layernorm_embedding.weight"))
         put(f"{side}.ln_emb.beta",  col(f"model.{src}.layernorm_embedding.bias"))
