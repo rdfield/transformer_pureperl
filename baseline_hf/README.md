@@ -215,9 +215,11 @@ refuses to run below 6 GB rather than trusting the operator to remember.
 `measure.py` was not in the original plan. It exists because the arm A smoke test
 produced output that *read* as fluent summary but turned out to be near-verbatim
 copying, which the A/B/C rubric cannot distinguish from abstraction — see
-`RESULTS.md`.
+the local results doc.
 
 ## Results
 
-See `RESULTS.md`. It is written as the experiment proceeds and records what was
+`RESULTS.md` is deliberately NOT in this repo -- it quoted verbatim model
+generations, which carried real names, supplier names and order numbers from
+client correspondence. It is kept locally and records what was
 found, including anything that contradicts the hypothesis above.

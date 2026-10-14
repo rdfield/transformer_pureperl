@@ -310,7 +310,8 @@ with the wordier output.
 
 ## Control experiment — `baseline_hf/`
 
-Independent of the stages above; see `baseline_hf/RESULTS.md`.
+Independent of the stages above. The detailed results doc is kept OUT of this
+repo: it quoted verbatim generations carrying real client identifiers.
 
     PY=/home/mvine/miniconda3/envs/fastbook/bin/python   # transformers 4.37.2, torch 2.2.0
     $PY prepare_data.py

@@ -63,7 +63,7 @@ CUT = re.compile(
 # Zero-width and soft-hyphen padding. HTML marketing mail pads its preheader
 # with runs of these so the preview text looks right; one val source is 32%
 # invisible characters by count. They SURVIVED BPE ENCODING, so the model is
-# being fed them too — see RESULTS.md, this is a preprocessing finding, not just
+# being fed them too — this is a preprocessing finding, not just
 # a baseline one. No reference summary contains a single one.
 INVISIBLE = re.compile(r"[\u200b-\u200f\u2060\u034f\u00ad\ufeff]+")
 
