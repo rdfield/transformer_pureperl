@@ -48,3 +48,15 @@ split_test/
 truncate_emails_regen_summary.pl
 enron_filtered_8000.txt
 enron_cosmo_filtered_8000.txt
+
+# Client vocab/model pairs — built FROM client email, so the merge table carries
+# name and domain fragments. client_emails.{vocab,model} were committed in the root
+# commit and had to be scrubbed from all history; these rules stop a recurrence.
+client_emails*.model
+client_emails*.vocab
+client_emails*.out
+cosmo_client_blended*.model
+cosmo_client_blended*.vocab
+
+# local git log dump, regenerate with `git log --stat`
+history.txt

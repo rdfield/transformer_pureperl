@@ -189,6 +189,93 @@ SPOT AUDIT
      perl /home/mvine/embedding/decode_gen2.pl < /home/mvine/gen_audit100.txt \
      > /home/mvine/audit100_text.txt
 
+RUN WITH "POINTER" FUNCTIONS ENABLED, THESE ARE "RARE TOKEN" COPY FUNCTIONS (RATHER THAN ARGMAX)
 
+nohup stdbuf -oL ./build/MVEncDecTrainer \
+     --train /home/mvine/shared/rdf/pretrain_data/train_16000_finetune.txt \
+     --val   /home/mvine/shared/rdf/pretrain_data/val_16000_finetune.txt \
+     --vocab /home/mvine/shared/rdf/pretrain_data/cosmo_client_blended2.model \
+     --init  /home/mvine/shared/rdf/pretrain_data/encdec_d256_16k_pretrain.safetensors \
+     --d 256 --enc_layers 4 --dec_layers 4 --heads 8 --d_ff 1024 \
+     --seq_enc 2048 --seq_tgt 240 --email_budget 2048 --summary_budget 224 \
+     --batch 4 --accum 4 --epochs 40 --patience 4 --lr 0.0001 \
+     --bucket --cond_check --pointer --pointer_warm 500 \
+     /home/mvine/shared/rdf/pretrain_data/encdec_d256_16k_ptr.safetensors \
+     > /home/mvine/shared/rdf/pretrain_data/encdec_pointer.log 2>&1 &
 
+ cd /home/mvine/embedding_cpp
+  P=/home/mvine/shared/rdf/pretrain_data
+
+  stdbuf -oL ./build/MVEncDecTrainer \
+    --init d768_annealed.safetensors \
+    --train $P/train_16000_finetune.txt \
+    --val   $P/val_16000_finetune.txt \
+    --vocab $P/cosmo_client_blended2.model \
+    --d 768 --enc_layers 4 --dec_layers 4 --heads 8 --d_ff 3072 \
+    --seq_enc 2048 --seq_tgt 240 \
+    --email_budget 2048 --summary_budget 224 \
+    --batch 4 --accum 8 \
+    --epochs 30 --lr 0.0003 --patience 4 \
+    --pointer --flash --bucket \
+    --cond_check --seed 42 \
+    d768_thread_ft.safetensors 2>&1 | tee ~/d768_ft.log
+
+ #####  multi stage process
+ 1. 2B cosmo + Enron + client tokens, pretrain
+ stdbuf -oL ./build/MVEncDecTrainer \
+    --init d768_annealed.safetensors \
+    --train $P/train_16000_finetune.txt \
+    --val   $P/val_16000_finetune.txt \
+    --vocab $P/cosmo_client_blended2.model \
+    --d 768 --enc_layers 4 --dec_layers 4 --heads 8 --d_ff 3072 \
+    --seq_enc 2048 --seq_tgt 240 \
+    --email_budget 2048 --summary_budget 224 \
+    --batch 4 --accum 8 \
+    --epochs 30 --lr 0.0003 --patience 4 \
+    --pointer --flash --bucket \
+    --cond_check --seed 42 \
+    d768_thread_ft.safetensors 2>&1 | tee ~/d768_ft.log
+
+ 2. generate enron summaries using Qwen, add to training
  
+  stdbuf -oL ./build/MVEncDecTrainer \
+    --init d768_annealed.safetensors \
+    --train $P/stage2_fit.train --val $P/val_16000_finetune.txt \
+    --vocab $P/cosmo_client_blended2.model \
+    --d 768 --enc_layers 4 --dec_layers 4 --heads 8 --d_ff 3072 \
+    --seq_enc 2048 --seq_tgt 240 --email_budget 2048 --summary_budget 224 \
+    --batch 4 --accum 8 --epochs 8 --lr 0.0003 --patience 3 \
+    --pointer --flash --bucket --cond_check --seed 42 \
+    d768_stage2.safetensors 2>&1 | tee ~/d768_stage2.log
+
+ 3. fine tune again using client summaries
+ 
+ # after updating the code so that it can use a pretrained BART weight model
+ 
+ 
+  # 1. re-encode the pairs with BART's tokeniser (already done, idempotent)
+  cd /home/mvine/embedding/baseline_hf
+  $PY pairs_to_bart_ids.py
+ 
+  # 2. skeleton at the geometry you want, then convert
+  conda activate fastbook # env with pytorch
+  PY=python
+  cd /home/mvine/embedding_cpp
+  ./build-bias/bart_skeleton /tmp/skel2048.safetensors --seq_enc 2048 --seq_tgt 256 --pointer
+  cd /home/mvine/embedding/baseline_hf
+  $PY bart_to_mv.py --skeleton /tmp/skel2048.safetensors --out bart_init2048.safetensors
+
+  # 3. fine-tune
+  cd /home/mvine/embedding_cpp
+  P=/home/mvine/shared/rdf/pretrain_data
+  stdbuf -oL ./build-bias/MVEncDecTrainer \
+    --init bart_init2048.safetensors \
+    --train $P/bart50k_train_finetune.txt --val $P/bart50k_val_finetune.txt \
+    --vocab bart_init2048_vocab.model \
+    --d 768 --enc_layers 6 --dec_layers 6 --heads 12 --d_ff 3072 \
+    --seq_enc 2048 --seq_tgt 256 --email_budget 2048 --summary_budget 240 \
+    --batch 2 --accum 16 --epochs 12 --lr 0.00003 --patience 3 \
+    --flash --bucket --cond_check --seed 42 \
+    d768_bart_ft.safetensors 2>&1 | tee ~/bart_ft.log
+
+

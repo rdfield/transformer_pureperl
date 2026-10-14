@@ -5,6 +5,12 @@
 data/
 out/
 logs/
+clsdata/
+
+# Catch-all for the same content under ANY new directory name: clsdata/ was
+# added later and fell outside data/|out/|logs/, leaving 19 MB of decoded
+# client email one `git add -A` away from a public push.
+*.jsonl
 
 # fine-tuned checkpoints (hundreds of MB, and trained on the above)
 B_bart_base/
