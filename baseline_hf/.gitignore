@@ -18,3 +18,11 @@ B_bart_base/
 *.bin
 .decode.pl
 bart_layer0.safetensors
+
+# RESULTS.md quotes verbatim model generations, and the whole finding was that
+# the model COPIES real identifiers -- so it carried real names, supplier names,
+# purchase order numbers and SKUs from client correspondence. Removed from all
+# history rather than scrubbed entity-by-entity: 52 quoted blocks is too large a
+# surface to enumerate reliably (two passes each missed entities the next found).
+# Kept locally. Commit a reviewed version if it is ever needed publicly.
+RESULTS.md
