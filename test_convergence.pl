@@ -49,7 +49,9 @@ my $WARMUP_EPOCHS  = 5;      # linear ramp from LR/WARMUP_EPOCHS to LR over firs
 my $MIN_LR         = $LR * 0.1;             # cosine decay floor
 
 my $LOSS_PASS_RATIO   = 0.85;   # final loss must be < this fraction of epoch-1 loss
-                                # (MHA now uses Adam; observed ratio ~0.79 at 50 epochs)
+                                # (MHA now uses Adam; observed ratio 0.018 at 50 epochs on
+                                #  2026-10-14, with 40/40 accuracy -- the task is solved, so this
+                                #  bar is now slack by a wide margin)
 my $ACCURACY_PASS_PCT = 0;
 
 # ── data generation ───────────────────────────────────────────────────────────
