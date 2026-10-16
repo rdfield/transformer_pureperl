@@ -20,7 +20,8 @@ a model that quietly ignores the eight rare classes scores 80.3% accuracy --
 better than our actual 73.5% -- while being useless for the rare categories a
 human most wants routed correctly. Accuracy alone cannot tell those apart.
 """
-import json, os, numpy as np, torch
+import json
+import os, numpy as np, torch
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 from transformers import (AutoTokenizer, AutoModelForSequenceClassification,
                           TrainingArguments, Trainer, DataCollatorWithPadding)
@@ -86,9 +87,32 @@ trainer.train()
 pred = trainer.predict(val_ds)
 logits = pred.predictions[0] if isinstance(pred.predictions, tuple) else pred.predictions
 preds = np.argmax(logits, axis=-1)
+# Persist the fine-tuned model. save_strategy="no" above is deliberate -- it
+# avoids writing a 560 MB checkpoint after EVERY epoch -- but with no final save
+# either, the result was unreproducible for inference: evaluating it, measuring
+# its latency, or using it to mine rare-class candidates from unlabelled email
+# all meant a ~36 min retrain. Set SAVE_MODEL=0 to skip.
+if os.environ.get("SAVE_MODEL", "1") != "0":
+    trainer.save_model(want["output_dir"])
+    tok.save_pretrained(want["output_dir"])
+    print(f"saved fine-tuned model to {want['output_dir']}")
+
 print("\n================ CONTROL RESULT ================")
 print(f"accuracy    {accuracy_score(pred.label_ids, preds)*100:.1f}%")
 print(f"macro-F1    {f1_score(pred.label_ids, preds, average='macro', zero_division=0):.3f}")
 print(f"weighted-F1 {f1_score(pred.label_ids, preds, average='weighted', zero_division=0):.3f}")
 print("\n" + classification_report(pred.label_ids, preds, target_names=LABELS,
                                    digits=3, zero_division=0))
+
+# Persist per-example (true, predicted). Without this, NOTHING about this arm
+# can be re-analysed -- bootstrap CIs, a different averaging, a confusion matrix
+# -- without a ~36 min retrain, and the only record is whatever got printed to a
+# log. Mirrors --dump_preds on the C++ trainer so the two arms are comparable
+# with the same script. Same column order: true,pred.
+DUMP = os.environ.get("DUMP_PREDS", "cls_preds_bart.csv")
+with open(DUMP, "w") as f:
+    for t, q in zip(pred.label_ids, preds):
+        f.write(f"{int(t)},{int(q)}\n")
+print(f"\nwrote {len(preds)} predictions to {DUMP}")
+print("NOTE: these class ids are LABELS.index() order (alphabetical), which is NOT")
+print("      the C++ trainer's ordering. Map by name or by support before comparing.")
