@@ -279,3 +279,13 @@ nohup stdbuf -oL ./build/MVEncDecTrainer \
     d768_bart_ft.safetensors 2>&1 | tee ~/bart_ft.log
 
 
+  To deploy CLASSIFIER!
+ 
+  cmake -S /home/mvine/embedding_cpp -B /home/mvine/embedding_cpp/build-cpu
+  cmake --build /home/mvine/embedding_cpp/build-cpu -j6
+ 
+  That reconfigure picks up Release automatically and rebuilds the library MVClassifierCPU.pm already points at — no Perl change needed, since the ABI is identical. Then set OPENBLAS_NUM_THREADS=1 in the
+  service environment, and make sure the host has libopenblas.so.0 and libgfortran.so.5.
+ 
+
+
