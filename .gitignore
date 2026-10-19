@@ -60,3 +60,6 @@ cosmo_client_blended*.vocab
 
 # local git log dump, regenerate with `git log --stat`
 history.txt
+
+# personal log of command lines used; kept locally, not tracked
+slm_training_command_line_examples.txt
