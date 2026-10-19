@@ -13,11 +13,6 @@ sub type {
    return "ML::DecoderBlock";
 }
 
-sub initialise {
-   my $self = shift;
-   $self->{ln_layer}->initialise();
-}
-
 sub get_grad_tensors {
    my $self = shift;
    return [ map { @{$_->get_grad_tensors()} } @{$self->{residual_connections}} ];

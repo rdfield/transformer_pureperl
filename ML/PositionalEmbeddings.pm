@@ -70,7 +70,7 @@ sub new {
 sub backward {
    my $self = shift;
    my %args = @_;
-   my $grad = $args{next}->{gradient};
+   my $grad = $args{next}->gradient();
    if (defined($self->{dropout}) && defined($self->{dropout_mask})) {
       $self->{gradient} = dclone($grad);
       for my $b (0 .. $#$grad) {
@@ -88,7 +88,7 @@ sub backward {
 sub gradient {
    my $self = shift;
    my %args = @_;
-   if ($args{gradient}) { # testing, will be $args{next}->{gradient};
+   if ($args{gradient}) { # testing: lets a test inject the gradient directly
       $self->{gradient} = dclone($args{gradient});
    }
    return $self->{gradient};
