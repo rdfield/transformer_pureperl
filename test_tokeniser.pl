@@ -88,7 +88,7 @@ sub ok_ids_eq {
 
 # ── shared corpus ─────────────────────────────────────────────────────────────
 
-# Nathan Reed quote — same text used in basic_tokeniser.pl
+# Nathan Reed quote — the sample text from his blog post on BPE tokenisation
 my $TRAIN_TEXT = q{Unicode! The very name strikes fear and awe into the hearts of programmers worldwide. We all know we ought to support Unicode in our software. But Unicode can be abstruse, and diving into the thousand-page Unicode Standard plus its dozens of supplementary annexes, reports, and notes can be more than a little intimidating. I don't blame programmers for still finding the whole thing mysterious, even 30 years after Unicode's inception. But today I'm going to take a deep breath and try to explain the absolute minimum that a programmer needs to know about Unicode. Unicode is a standard for encoding, transmitting and processing text. The most important thing to understand about Unicode is that it is fundamentally a mapping of integers to characters.};
 
 my $UNSEEN_TEXT = q{Many common characters, including numerals, punctuation, and other symbols, are unified within the standard and distinguished from characters of other scripts by their properties.};

@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 # test_convergence.pl — convergence test for the Transformer copy task.
 # Exercises the full encoder-decoder cross-attention path (all three backprop
-# bugs corrected — see ML/MHA.pm, ML/Transformer.pm, and train_model_small.pl).
+# bugs corrected — see ML/MHA.pm, ML/Transformer.pm, and the original small-model training script).
 
 use Modern::Perl;
 use lib '.';
@@ -248,6 +248,6 @@ say "=" x 60;
 say "OVERALL: " . (($loss_pass && $acc_pass) ? "PASS" : "FAIL");
 say "";
 say "Bugs fixed in this run:";
-say "  Bug 1: 'encode_output =>' typo corrected to 'encoder_output =>' (train_model_small.pl).";
+say "  Bug 1: 'encode_output =>' typo corrected to 'encoder_output =>' (original small-model training script).";
 say "  Bug 2: MHA::backward now uses input_kv (encoder output) for dWk/dWv in cross-attn.";
 say "  Bug 3: Transformer::update now routes decoder->gradient_enc() to encoder->backward().";
