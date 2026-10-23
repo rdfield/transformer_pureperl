@@ -94,15 +94,27 @@ sub forward {
    if ($args{batch}) {
       $args{q} = $args{batch};
       $args{v} = defined($args{batch_1})?$args{batch_1} : $args{batch};
-      $args{k} = defined($args{batch_2})?$args{batch_2} : $args{batch};
+      $args{k} = defined($args{batch_2})?$args{batch_2} : $args{v};
    }
+   # Keys and values come from ONE tensor: the encoder output for cross-attention,
+   # the input itself for self-attention. backward() computes dW_k, dW_v and a
+   # single gradient_kv from that one tensor, so a different k and v would get
+   # silently wrong gradients. Both K and V below are projected from $args{v}.
+   confess "ML::MHA: keys and values must come from the same tensor, but batch_1 and batch_2 differ"
+      unless _same_tensor($args{k}, $args{v});
    $self->{input}             = dclone($args{q});
-   $self->{input_kv}          = dclone($args{k});   # encoder output for cross-attn; same as input for self-attn
+   $self->{input_kv}          = dclone($args{v});   # the K and V source
    $self->{is_cross_attention} = defined($args{batch_1}) ? 1 : 0;
    my $batch_size = scalar(@{$args{q}});
    my $seq_len = scalar(@{$args{q}->[0]});
    $self->{batch_size} = $batch_size;
    $self->{seq_len} = $seq_len;
+   # The head split and every S x S loop in backward() use the QUERY length for
+   # keys and values too, so a longer source would be silently truncated.
+   my $kv_len = scalar(@{$args{v}->[0]});
+   confess "ML::MHA: query length $seq_len differs from key/value length $kv_len; "
+         . "cross-attention here needs both padded to the same length"
+      if $kv_len != $seq_len;
    if ($self->{debug}) {
       say "ML::MHA batch size = $batch_size, seq_len = $seq_len";
    }
@@ -271,18 +283,6 @@ sub backward {
          }
       }
    }
-   my $d_attn = [];
-   foreach my $b (0 .. $self->{batch_size} - 1) {
-      foreach my $n (0 .. $self->{num_heads} - 1) {
-         $d_attn->[$b][$n] = matmul($d_out_heads->[$b][$n], transpose($self->{resized_V}[$b][$n]));
-         if ($self->{debug}) {
-            print_2d_array("d_out_heads $b $n",  $d_out_heads->[$b][$n]);
-            print_2d_array("transposed resized V $b $n", transpose($self->{resized_V}[$b][$n]));
-            print_2d_array("d_attn $b $n", $d_attn->[$b][$n]);
-         }
-      }
-   }
-
    # calculate dV from attention_weights x d_out_heads
 
    my $dVs = [];
@@ -298,6 +298,10 @@ sub backward {
    foreach my $b (0 .. $self->{batch_size} - 1) {
       foreach my $n (0 .. $self->{num_heads} - 1) {
          $dA->[$b][$n] = matmul($d_out_heads->[$b][$n], transpose($self->{resized_V}->[$b][$n]));
+         if ($self->{debug}) {
+            print_2d_array("d_out_heads $b $n", $d_out_heads->[$b][$n]);
+            print_2d_array("dA $b $n", $dA->[$b][$n]);
+         }
       }
    }
 
@@ -463,6 +467,23 @@ sub backward {
       printf "    [mha_bwd %s] |dWq|=%.3e  |dWk|=%.3e  |dWv|=%.3e  |dWo|=%.3e\n",
              $self->{name}, $fro2->($self->{dWq}), $fro2->($self->{dWk}), $fro2->($self->{dWv}), $fro2->($self->{dWo});
    }
+}
+
+# True when two [batch][seq][emb] tensors are the same reference or hold the
+# same values (callers that dclone the encoder output pass equal copies).
+sub _same_tensor {
+   my ($x, $y) = @_;
+   return 1 if $x == $y;
+   return 0 unless @$x == @$y;
+   for my $b (0 .. $#$x) {
+      return 0 unless @{$x->[$b]} == @{$y->[$b]};
+      for my $s (0 .. $#{$x->[$b]}) {
+         my ($rx, $ry) = ($x->[$b][$s], $y->[$b][$s]);
+         return 0 unless @$rx == @$ry;
+         for my $e (0 .. $#$rx) { return 0 unless $rx->[$e] == $ry->[$e] }
+      }
+   }
+   return 1;
 }
 
 sub gradient {

@@ -9,13 +9,20 @@
 #      Checks: dWq, dWk, dWv, dWo, d_input (gradient)
 #   2. Cross-attention (batch=Q, batch_1=batch_2=K/V source)
 #      Checks: dWq, dWk, dWv, dWo, d_Q (gradient), d_KV (gradient_kv)
+#   3. Self-attention with a causal + padding mask (create_tgt_mask)
+#   4. Cross-attention with a source padding mask (create_src_mask)
+#   5. Self-attention with a causal mask AND dropout 0.3
+#   6. Input rules: keys and values from one tensor, equal lengths
 #
-# dropout is set to "0.0" so attention weights are deterministic.
+# Tests 1-4 use dropout "0.0". Test 5 makes dropout repeatable instead: forward
+# draws its mask from rand(), so srand() with the same seed before EVERY forward
+# (the analytic one and each perturbed one) gives them all the same mask.
 
 use Modern::Perl;
 use lib '.';
 use ML::MHA;
 use ML::LossGradient;
+use ML::Util qw(create_src_mask create_tgt_mask);
 use Storable qw(dclone);
 use POSIX qw(sqrt);
 
@@ -69,12 +76,12 @@ sub ones_3d {
 }
 
 sub make_mha {
-    my ($Wq, $Wk, $Wv, $Wo) = @_;
+    my ($Wq, $Wk, $Wv, $Wo, $dropout) = @_;
     return ML::MHA->new(
         embeddings     => $EMBED,
         num_heads      => $HEADS,
         max_seq_length => $MSL,
-        dropout        => "0.0",
+        dropout        => $dropout // "0.0",
         W_q => dclone($Wq),
         W_k => dclone($Wk),
         W_v => dclone($Wv),
@@ -96,6 +103,30 @@ sub fwd_cross {
         batch_1 => dclone($kv),
         batch_2 => dclone($kv),
     ));
+}
+
+# Masked and dropout variants. $p > 0 reseeds before the forward, so every
+# call -- analytic or perturbed -- draws the same dropout mask.
+my $DROP_SEED = 1234;
+sub fwd_self_m {
+    my ($Wq, $Wk, $Wv, $Wo, $inp, $mask, $p) = @_;
+    my $m = make_mha($Wq, $Wk, $Wv, $Wo, $p);
+    srand($DROP_SEED) if $p;
+    return sum_3d($m->forward(batch => dclone($inp), mask => $mask));
+}
+
+sub fwd_cross_m {
+    my ($Wq, $Wk, $Wv, $Wo, $q, $kv, $mask) = @_;
+    my $m = make_mha($Wq, $Wk, $Wv, $Wo);
+    return sum_3d($m->forward(batch => dclone($q), batch_1 => dclone($kv),
+                              batch_2 => dclone($kv), mask => $mask));
+}
+
+sub check_dies {
+    my ($label, $code, $re) = @_;
+    eval { $code->(); 1 };
+    if ($@ =~ $re) { $PASS++; say "    PASS  $label" }
+    else { $FAIL++; push @FAILURES, "  FAIL  $label (" . ($@ ? "died: $@" : "did not die") . ")" }
 }
 
 sub check_weight_matrix {
@@ -208,6 +239,99 @@ say "=" x 70;
     # K/V gradient (encoder stream) — lives in gradient_kv
     check_input_3d("d_KV (gradient_kv)", $mha->{gradient_kv}, $kv,
         sub { fwd_cross($Wq, $Wk, $Wv, $Wo, $q, shift) }, []);
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Token ids for the masks: batch 0 is unpadded, batch 1 has PAD (0) last.
+my $IDS = [[5, 6, 7], [5, 6, 0]];
+
+say "\n" . "=" x 70;
+say "TEST 3: SELF-ATTENTION + causal/padding mask  [create_tgt_mask]";
+say "=" x 70;
+
+{
+    my $mask = create_tgt_mask(tgt_ids => $IDS, pad_id => 0);
+    my $mha = make_mha($Wq, $Wk, $Wv, $Wo);
+    $mha->forward(batch => dclone($inp), mask => $mask);
+    $mha->backward(next => ML::LossGradient->new(gradient => ones_3d($BATCH, $SEQ, $EMBED)));
+    check_weight_matrix("dWq", $Wq, $mha->{dWq}, sub { fwd_self_m(shift, $Wk, $Wv, $Wo, $inp, $mask) }, []);
+    check_weight_matrix("dWk", $Wk, $mha->{dWk}, sub { fwd_self_m($Wq, shift, $Wv, $Wo, $inp, $mask) }, []);
+    check_weight_matrix("dWv", $Wv, $mha->{dWv}, sub { fwd_self_m($Wq, $Wk, shift, $Wo, $inp, $mask) }, []);
+    check_weight_matrix("dWo", $Wo, $mha->{dWo}, sub { fwd_self_m($Wq, $Wk, $Wv, shift, $inp, $mask) }, []);
+    check_input_3d("d_input", $mha->{gradient}, $inp, sub { fwd_self_m($Wq, $Wk, $Wv, $Wo, shift, $mask) }, []);
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+say "\n" . "=" x 70;
+say "TEST 4: CROSS-ATTENTION + source padding mask  [create_src_mask]";
+say "=" x 70;
+
+{
+    # A masked key receives no attention, so its gradient_kv rows must be zero --
+    # and the finite difference agrees, since perturbing it changes nothing.
+    my $mask = create_src_mask(src_ids => $IDS, pad_id => 0);
+    my $mha = make_mha($Wq, $Wk, $Wv, $Wo);
+    $mha->forward(batch => dclone($q), batch_1 => dclone($kv), batch_2 => dclone($kv), mask => $mask);
+    $mha->backward(next => ML::LossGradient->new(gradient => ones_3d($BATCH, $SEQ, $EMBED)));
+    check_weight_matrix("dWq", $Wq, $mha->{dWq}, sub { fwd_cross_m(shift, $Wk, $Wv, $Wo, $q, $kv, $mask) }, []);
+    check_weight_matrix("dWk", $Wk, $mha->{dWk}, sub { fwd_cross_m($Wq, shift, $Wv, $Wo, $q, $kv, $mask) }, []);
+    check_weight_matrix("dWv", $Wv, $mha->{dWv}, sub { fwd_cross_m($Wq, $Wk, shift, $Wo, $q, $kv, $mask) }, []);
+    check_weight_matrix("dWo", $Wo, $mha->{dWo}, sub { fwd_cross_m($Wq, $Wk, $Wv, shift, $q, $kv, $mask) }, []);
+    check_input_3d("d_Q (gradient)", $mha->{gradient}, $q, sub { fwd_cross_m($Wq, $Wk, $Wv, $Wo, shift, $kv, $mask) }, []);
+    check_input_3d("d_KV (gradient_kv)", $mha->{gradient_kv}, $kv, sub { fwd_cross_m($Wq, $Wk, $Wv, $Wo, $q, shift, $mask) }, []);
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+say "\n" . "=" x 70;
+say "TEST 5: SELF-ATTENTION + causal mask + dropout 0.3  (same mask every forward)";
+say "=" x 70;
+
+{
+    my $P = 0.3;
+    my $mask = create_tgt_mask(tgt_ids => $IDS, pad_id => 0);
+    my $mha = make_mha($Wq, $Wk, $Wv, $Wo, $P);
+    srand($DROP_SEED);
+    $mha->forward(batch => dclone($inp), mask => $mask);
+    my $dropped = 0;
+    for my $b (@{ $mha->{attention_dropout_mask} }) { for my $h (@$b) { for my $r (@$h) { $dropped += grep { $_ == 0 } @$r } } }
+    say "    $dropped of " . ($BATCH * $HEADS * $SEQ * $SEQ) . " attention weights dropped";
+    $mha->backward(next => ML::LossGradient->new(gradient => ones_3d($BATCH, $SEQ, $EMBED)));
+    check_weight_matrix("dWq", $Wq, $mha->{dWq}, sub { fwd_self_m(shift, $Wk, $Wv, $Wo, $inp, $mask, $P) }, []);
+    check_weight_matrix("dWk", $Wk, $mha->{dWk}, sub { fwd_self_m($Wq, shift, $Wv, $Wo, $inp, $mask, $P) }, []);
+    check_weight_matrix("dWv", $Wv, $mha->{dWv}, sub { fwd_self_m($Wq, $Wk, shift, $Wo, $inp, $mask, $P) }, []);
+    check_weight_matrix("dWo", $Wo, $mha->{dWo}, sub { fwd_self_m($Wq, $Wk, $Wv, shift, $inp, $mask, $P) }, []);
+    check_input_3d("d_input", $mha->{gradient}, $inp, sub { fwd_self_m($Wq, $Wk, $Wv, $Wo, shift, $mask, $P) }, []);
+    if ($dropped == 0) { $FAIL++; push @FAILURES, "  FAIL  TEST 5 dropped nothing, so it tested no dropout" }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+say "\n" . "=" x 70;
+say "TEST 6: INPUT RULES";
+say "=" x 70;
+
+{
+    my $other = rand_inp($BATCH, $SEQ, $EMBED);
+    my $long  = rand_inp($BATCH, $SEQ + 1, $EMBED);
+    check_dies("different keys and values are refused",
+        sub { make_mha($Wq, $Wk, $Wv, $Wo)->forward(batch => dclone($q), batch_1 => $kv, batch_2 => $other) },
+        qr/same tensor/);
+    check_dies("a key/value source longer than the query is refused",
+        sub { make_mha($Wq, $Wk, $Wv, $Wo)->forward(batch => dclone($q), batch_1 => $long, batch_2 => $long) },
+        qr/differs from key\/value length/);
+
+    # batch_1 alone now means keys = values = batch_1. It used to default the
+    # keys' input to the QUERY, so dW_k and dW_v were taken against the wrong tensor.
+    my $a = make_mha($Wq, $Wk, $Wv, $Wo);
+    $a->forward(batch => dclone($q), batch_1 => dclone($kv));
+    $a->backward(next => ML::LossGradient->new(gradient => ones_3d($BATCH, $SEQ, $EMBED)));
+    my $b = make_mha($Wq, $Wk, $Wv, $Wo);
+    $b->forward(batch => dclone($q), batch_1 => dclone($kv), batch_2 => dclone($kv));
+    $b->backward(next => ML::LossGradient->new(gradient => ones_3d($BATCH, $SEQ, $EMBED)));
+    my $same = 1;
+    for my $w (qw(dWk dWv)) { for my $i (0 .. $EMBED - 1) { for my $j (0 .. $EMBED - 1) {
+        $same = 0 if abs($a->{$w}[$i][$j] - $b->{$w}[$i][$j]) > 1e-12 } } }
+    if ($same) { $PASS++; say "    PASS  batch_1 alone gives the same dW_k/dW_v as batch_1 = batch_2" }
+    else { $FAIL++; push @FAILURES, "  FAIL  batch_1 alone gives different dW_k/dW_v from batch_1 = batch_2" }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

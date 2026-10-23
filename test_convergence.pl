@@ -52,7 +52,10 @@ my $LOSS_PASS_RATIO   = 0.85;   # final loss must be < this fraction of epoch-1 
                                 # (MHA now uses Adam; observed ratio 0.018 at 50 epochs on
                                 #  2026-10-14, with 40/40 accuracy -- the task is solved, so this
                                 #  bar is now slack by a wide margin)
-my $ACCURACY_PASS_PCT = 0;
+my $ACCURACY_PASS_PCT = 90;     # greedy-decode accuracy on the 40 held-out copies. Was 0,
+                                # which `>=` can never fail. The run is seeded (srand(1)) and
+                                # reached 40/40 on 2026-10-14; 90% leaves room for numerical
+                                # drift while still failing a model that has stopped copying.
 
 # ── data generation ───────────────────────────────────────────────────────────
 sub gen_copy_data {
