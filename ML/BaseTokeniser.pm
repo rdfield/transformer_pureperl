@@ -232,24 +232,27 @@ sub save {
 =cut
    # write the model: to be used in load() later
    my $model_file_name = $file_prefix . ".model";
-   open(F, ">", $model_file_name);
+   # Lexical handles, closed before returning: save() used to write through
+   # the globals F and V and never close them, so the .model file stayed
+   # partly buffered -- truncated on disk -- until the process exited.
+   open(my $F, ">", $model_file_name) or confess "cannot write $model_file_name: $!";
    # write the version, pattern and merges, that's all that's needed
-   print F "minbpe v1\n";
-   print F $self->{pattern} . "\n";
+   print $F "minbpe v1\n";
+   print $F $self->{pattern} . "\n";
    # write the special tokens, first the number of them, then each one
-   print F scalar(%{$self->{special_tokens}}) . "\n";
+   print $F scalar(%{$self->{special_tokens}}) . "\n";
    foreach my $st (keys %{$self->{special_tokens}}) {
-      print F $st . " " . $self->{special_tokens}{$st} . "\n";
+      print $F $st . " " . $self->{special_tokens}{$st} . "\n";
    }
    # the merges dict
    foreach my $m (@{$self->{merges}}) {
-      #print F $m->{key} . "\n";
-      print F join(" ", @{$m->{pair}}) . "\n";
+      print $F join(" ", @{$m->{pair}}) . "\n";
    }
+   close($F) or confess "cannot write $model_file_name: $!";
    # write the vocab: for the human to look at
    my $vocab_file_name = $file_prefix . ".vocab";
    my %inverted_merges = map {$_->{value} => $_->{key}} @{$self->{merges}};
-   open(V, ">:encoding(utf-8)", $vocab_file_name);
+   open(my $V, ">:encoding(utf-8)", $vocab_file_name) or confess "cannot write $vocab_file_name: $!";
    foreach my $vocidx (0 .. $#{$self->{vocab}}) {
       # note: many tokens may be partial utf-8 sequences
       # and cannot be decoded into valid strings. Here we're using
@@ -265,13 +268,14 @@ sub save {
          my $idx1 = $2;
          my $s0 = $self->render_token($self->{vocab}[$idx0]);
          my $s1 = $self->render_token($self->{vocab}[$idx1]);
-         print V "[$s0][$s1] -> [$s] $vocidx\n";
+         print $V "[$s0][$s1] -> [$s] $vocidx\n";
       } else {
          # otherwise this is leaf token, just print it
          # (this should just be the first 256 tokens, the bytes)
-         print V "[$s] $vocidx\n";
+         print $V "[$s] $vocidx\n";
       }
    }
+   close($V) or confess "cannot write $vocab_file_name: $!";
 }
 
 sub load {
@@ -285,32 +289,32 @@ sub load {
    $self->{merges} = [];
    $self->{special_tokens} = {};
    my $idx = 256;
-   open(F, "<:encoding(utf-8)" , $model_file);
+   open(my $F, "<:encoding(utf-8)" , $model_file) or confess "cannot read $model_file: $!";
    # read the version
-   my $version = <F>;
+   my $version = <$F>;
    chomp($version);
    return unless $version eq "minbpe v1";
    # read the pattern
-   $self->{pattern} = <F>;
+   $self->{pattern} = <$F>;
    chomp($self->{pattern});
    # read the special tokens
-   my $num_special = <F>;
+   my $num_special = <$F>;
    chomp($num_special);
    $num_special *= 1; 
    foreach my $idx ( 0 .. $num_special -1 ) {
-      my $line = <F>;
+      my $line = <$F>;
       chomp($line);
       my ($special, $special_idx) = split/ /, $line;
       $self->{special_tokens}{$special} = $special_idx;
    }
    # read the merges
-   while (my $line = <F>) {
+   while (my $line = <$F>) {
       chomp($line);
       my @pair = split / /,$line;
       push @{$self->{merges}}, {pair => \@pair, key => join(",",@pair), value => $idx++ } ;
    }
    $self->{vocab} = $self->_build_vocab();
-   close F;
+   close $F;
 }
 
 sub vocab_size {

@@ -5,14 +5,19 @@ use parent qw(ML::BaseTokeniser);
 use Data::Dumper;
 use feature 'unicode_strings';
 use Time::HiRes qw(time);
+use Carp qw(carp);
 
-
-#our $GPT4_SPLIT_PATTERN = qr/(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+/u;
-our $GPT4_SPLIT_PATTERN =  qr/'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+/;
+# GPT-4's pre-tokenisation split, as used by minbpe. Kept as a string so that
+# save() writes it into the .model file and load() restores it: encoding has to
+# split text exactly the way training did, or merges land in the wrong places.
+our $GPT4_SPLIT_PATTERN_STR = q{'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+};
+our $GPT4_SPLIT_PATTERN = qr/$GPT4_SPLIT_PATTERN_STR/;
 
 sub new {
    my $class = shift;
    my $self = $class->SUPER::new(@_);
+   my %args = @_;
+   $self->{pattern} = $args{pattern} // $GPT4_SPLIT_PATTERN_STR;
    $self->{special_tokens} = {};
    $self->{inverse_special_tokens} = {};
 die unless $self->{vocab_size} =~ /^\d+$/;
@@ -22,6 +27,16 @@ die unless $self->{vocab_size} =~ /^\d+$/;
 sub merges {
    my $self = shift;
    return $self->{merges};
+}
+
+# load() replaces the merges, so the cached merge lookup must go with them, or a
+# reused tokeniser keeps encoding with the previous model's merges. A pre-fix
+# .model file has an empty pattern line; those were trained with GPT-4's.
+sub load {
+   my $self = shift;
+   $self->SUPER::load(@_);
+   delete $self->{merges_hash};
+   $self->{pattern} = $GPT4_SPLIT_PATTERN_STR unless length($self->{pattern} // '');
 }
 
 sub train {
@@ -36,12 +51,18 @@ sub train {
 
   my $t = time;
 
-   my @chunks = $text =~ /$GPT4_SPLIT_PATTERN/gms;
+   delete $self->{merges_hash};                 # train() replaces the merges
+   $self->_check_decoded($text, 'train');
+   my $split_re = $self->_split_re;
+   my @chunks = $text =~ /$split_re/gms;
 
   $t = time;
-   my (%freq, @weight, @ids);
-   $freq{$_}++ for @chunks;
-   foreach my $ch (keys %freq) {
+   # Unique chunks in FIRST-SEEN order, not hash order: equally frequent pairs
+   # are tie-broken by which was seen first, so hash order made the same corpus
+   # train a different vocab on every run. First-seen is also minbpe's rule.
+   my (%freq, @order, @weight, @ids);
+   for (@chunks) { push @order, $_ unless $freq{$_}++ }
+   foreach my $ch (@order) {
       push @ids , [ map { utf8::encode($_); unpack('C*', $_)} split//,$ch ];
       push @weight, $freq{$ch};
    } 
@@ -91,7 +112,8 @@ sub train {
 
       my $idx = 256 + $i;
       $t = time;
-      my @affected = keys %{$pair_to_chunks->{$most_frequent_key}};
+      # chunk order decides the first-seen order of the pairs this merge creates
+      my @affected = sort { $a <=> $b } keys %{$pair_to_chunks->{$most_frequent_key}};
       if (scalar(@affected) > 0) {
          foreach my $ch (@affected) {
             $ids[$ch] = $self->merge($ids[$ch], $most_frequent_pair, $idx, $stats, $pair_to_chunks, $ch, $weight[$ch]);
@@ -121,60 +143,69 @@ sub _build_merges_hash {
    $self->{merges_hash} = \%h;
 }
 
+# Encode one ordinary (non-special) segment. Mirrors minbpe's
+# RegexTokenizer.encode_ordinary: split with the same pattern train() used,
+# then encode each piece on its own, so no merge crosses a piece boundary.
+#
+# Before 2026-10-23 this applied, at each step, the merge whose pair was MOST
+# FREQUENT in the text being encoded -- the training rule -- and ran over the
+# whole text unsplit. The result decoded correctly, so nothing caught it, but it
+# was non-canonical: a word's ids depended on the rest of the text, it used
+# about 1.4x more tokens than the vocab allows, and its cost grew with the
+# square of the text length.
 sub _encode {
    my ($self, $text) = @_;
-   my @ids = map { utf8::encode($_); unpack('C*', $_)} split//,$text;
    $self->_build_merges_hash unless exists $self->{merges_hash};
+   my $split_re = $self->_split_re;
+   return map { $self->_encode_chunk($_) } ($text =~ /$split_re/gms);
+}
 
-   my $stats = {}; 
-   my $pair_to_chunks = {};
-
-my $loop_count = 0;
-
-   while (scalar(@ids) >= 2) {
-      my $stats = $self->get_stats(\@ids);
-      my $most_frequent_pair;
-      my $max_count = -1;
-
-  my $best_mergeidx;
-
-foreach my $pair_key (keys %$stats) {
-      if (my $candidate = $self->{merges_hash}{$pair_key}) {
-          my $cnt = $stats->{$pair_key}{count};
-          my $mi  = $stats->{$pair_key}{mergeidx};
-
-          my $better =
-             !defined($most_frequent_pair)        ? 1 :
-             $cnt > $max_count                    ? 1 :
-             $cnt < $max_count                    ? 0 :
-             $mi  < $best_mergeidx                ? 1 :
-                                                    0;
-
-         if ($better) {
-            $most_frequent_pair = $candidate;
-            $max_count = $cnt;
-            $best_mergeidx = $mi;
-         }
+# minbpe's _encode_chunk: repeatedly apply the EARLIEST-learned merge present.
+# How often a pair occurs in the text plays no part -- that is a training rule.
+# Merge ids are assigned in training order, so the lowest id is the earliest.
+sub _encode_chunk {
+   my ($self, $chunk) = @_;
+   utf8::encode($chunk);                 # characters -> UTF-8 bytes (a copy)
+   my @ids = unpack('C*', $chunk);
+   while (@ids >= 2) {
+      my $best;
+      for my $i (0 .. $#ids - 1) {
+         my $m = $self->{merges_hash}{"$ids[$i],$ids[$i+1]"} or next;
+         $best = $m if !$best || $m->{value} < $best->{value};
       }
-  }
-
-# end of the new minibpe version
-
-      if (!defined($most_frequent_pair)) {
-         last;
-      }
-      my $idx = $most_frequent_pair->{"value"};
-      @ids = $self->merge_for_encode(\@ids,  $most_frequent_pair->{pair}  , $idx);#, $stats, $pair_to_chunks, 0);
-
-
+      last unless $best;
+      @ids = $self->merge_for_encode(\@ids, $best->{pair}, $best->{value});
    }
    return @ids;
+}
+
+# The compiled split pattern. load() restores the pattern from the .model
+# file; files saved before the pattern was written there have an empty line,
+# and were all trained with the GPT-4 pattern, so that is the fallback.
+sub _split_re {
+   my $self = shift;
+   $self->{pattern} = $GPT4_SPLIT_PATTERN_STR unless length($self->{pattern} // '');
+   return $self->{_split_re}{ $self->{pattern} } //= qr/$self->{pattern}/;
+}
+
+# train() and encode() take decoded (character) strings. A string that still
+# holds raw UTF-8 bytes has every non-ASCII character encoded to UTF-8 a second
+# time, which trains merges that can never match decoded text. Raw UTF-8 shows
+# as a lead byte followed by a continuation byte, which decoded text almost
+# never contains. Warns once per tokeniser.
+sub _check_decoded {
+   my ($self, $text, $who) = @_;
+   return if $self->{_warned_undecoded} or utf8::is_utf8($text) or $text !~ /[\xC2-\xF4][\x80-\xBF]/;
+   $self->{_warned_undecoded} = 1;
+   carp "ML::Tokeniser::$who: the text looks like undecoded UTF-8 bytes. Decode it first "
+      . "(e.g. read it with :encoding(UTF-8)), or every non-ASCII character is tokenised double-encoded";
 }
 
 sub encode {
    my ($self) = shift;
    my %params = @_;
    my ($text) = $params{text} or die;
+   $self->_check_decoded($text, 'encode');
    my %options = @_;
    my $special = {};
    $options{allowed_special} ||= "none_raise";

@@ -44,6 +44,11 @@
 #   9.  UTF-8 multi-byte round-trip
 #   10. Save / load round-trip (same encode output)
 #   11. Edge cases: empty string, single ASCII byte, single non-ASCII char
+#   12. encode applies merges in training order, not by frequency in the text
+#   13. Encoding is local: a prefix cut at a word boundary encodes as a prefix
+#   14. Non-ASCII training text learns real UTF-8 merges; undecoded bytes warn
+#   15. The split pattern is saved, restored, and actually used; old files fall back
+#   16. Training is deterministic across Perl hash seeds
 
 use Modern::Perl;
 use utf8;
@@ -355,6 +360,134 @@ say "=" x 70;
         $all_bytes_ok = 0 unless defined $d;
     }
     ok("all 256 base byte IDs decode without error", $all_bytes_ok);
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+say "\n" . "=" x 70;
+say "TEST 12: encode applies merges in training order, not by frequency";
+say "=" x 70;
+
+{
+    # Hand-built vocab: 'ab' learned first (256), then 'bc' (257). In "abcbcbc"
+    # the pair bc occurs three times and ab once. Canonical BPE (minbpe) applies
+    # the earliest-learned merge first: ab, then bc -> [256, 99, 257, 257]. The
+    # encoder before 2026-10-23 took the most frequent pair first and produced
+    # [97, 257, 257, 257], which decodes correctly, so no other test caught it.
+    my $tok = ML::Tokeniser->new(vocab_size => 258);
+    $tok->{merges} = [ { pair => [97, 98], key => "97,98", value => 256 },
+                       { pair => [98, 99], key => "98,99", value => 257 } ];
+    $tok->{vocab} = $tok->_build_vocab();
+    my $r = $tok->encode(text => "abcbcbc");
+    ok_ids_eq("encode('abcbcbc') == [256,99,257,257]", $r, [256, 99, 257, 257]);
+    ok_eq("and it decodes back", $tok->decode(ids => $r), "abcbcbc");
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+say "\n" . "=" x 70;
+say "TEST 13: Encoding is local — a prefix encodes as a prefix";
+say "=" x 70;
+
+{
+    # BPE runs inside each pre-tokenised piece, so text after a word boundary
+    # cannot change how the text before it is encoded. The old encoder ran over
+    # the whole text unsplit and failed this on most real emails.
+    my $tok = ML::Tokeniser->new(vocab_size => 300);
+    $tok->train(text => $TRAIN_TEXT);
+    my @full = @{ $tok->encode(text => $UNSEEN_TEXT) };
+    my @cuts; push @cuts, $-[0] while $UNSEEN_TEXT =~ /(?<=\S) /g;   # just before each space
+    my $bad = 0;
+    for my $c (@cuts) {
+        my $pre = $tok->encode(text => substr($UNSEEN_TEXT, 0, $c));
+        $bad++ unless join(",", @$pre) eq join(",", @full[0 .. $#$pre]);
+    }
+    ok("all " . scalar(@cuts) . " word-boundary prefixes encode as a prefix of the whole", @cuts > 10 && $bad == 0);
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+say "\n" . "=" x 70;
+say "TEST 14: Non-ASCII training text learns real UTF-8 merges";
+say "=" x 70;
+
+{
+    # train() takes decoded text. 'é' is the UTF-8 bytes C3 A9; trained from
+    # undecoded bytes it becomes C3 83 C2 A9, and merges over those can never
+    # match decoded input. 5 merges are exactly enough to make 'café' and
+    # ' café' single tokens.
+    my $text = "café " x 60;                     # decoded: `use utf8` is on
+    my $tok = ML::Tokeniser->new(vocab_size => 261);
+    $tok->train(text => $text);
+    my @merged = @{ $tok->{vocab} }[256 .. 260];
+    ok("a merged token holds é as UTF-8 (C3 A9)",          scalar grep { /\xC3\xA9/ } @merged);
+    ok("no merged token holds double-encoded bytes (C3 83)", !grep { /\xC3\x83/ } @merged);
+    ok("'café' encodes to a single token",                  scalar(@{ $tok->encode(text => "café") }) == 1);
+
+    my $bytes = $text; utf8::encode($bytes);     # what read_file() returns without a layer
+    my $warned = 0;
+    { local $SIG{__WARN__} = sub { $warned++ if $_[0] =~ /undecoded UTF-8/ };
+      ML::Tokeniser->new(vocab_size => 260)->train(text => $bytes); }
+    ok("train() warns once when given undecoded UTF-8 bytes", $warned == 1);
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+say "\n" . "=" x 70;
+say "TEST 15: The split pattern is saved, restored and used";
+say "=" x 70;
+
+{
+    # A pattern with UNBOUNDED digit runs, unlike GPT-4's \p{N}{1,3}, so that
+    # "12345" can become one token only if this pattern is the one in use.
+    my $DIGITS = q{ ?\p{N}+| ?\p{L}+| ?[^\s\p{L}\p{N}]+|\s+};
+    my ($fh, $tmpfile) = tempfile(UNLINK => 0); close $fh; unlink $tmpfile;
+
+    my $tok_a = ML::Tokeniser->new(vocab_size => 261, pattern => $DIGITS);
+    $tok_a->train(text => "12345 " x 50);
+    $tok_a->save(file => $tmpfile);
+    ok("custom pattern: '12345' is a single token", scalar(@{ $tok_a->encode(text => "12345") }) == 1);
+
+    open my $mf, '<', "$tmpfile.model" or die; my @lines = <$mf>; close $mf;
+    chomp(my $line2 = $lines[1]);
+    ok("save() writes the pattern on line 2 of the .model file", $line2 eq $DIGITS);
+
+    my $tok_b = ML::Tokeniser->new(vocab_size => 261);       # constructed with the DEFAULT pattern
+    $tok_b->load(file => "$tmpfile.model");
+    ok("load() restores the pattern", $tok_b->{pattern} eq $DIGITS);
+    ok_ids_eq("and encodes with it", scalar $tok_b->encode(text => "12345"), scalar $tok_a->encode(text => "12345"));
+
+    # A file from before the pattern was saved has an empty line 2. Those were
+    # all trained with GPT-4's pattern, which splits "12345" into "123" + "45".
+    $lines[1] = "\n";
+    open $mf, '>', "$tmpfile.model" or die; print $mf @lines; close $mf;
+    my $tok_c = ML::Tokeniser->new(vocab_size => 261);
+    $tok_c->load(file => "$tmpfile.model");
+    ok("a pre-fix file falls back to the GPT-4 pattern",
+       $tok_c->{pattern} eq $ML::Tokeniser::GPT4_SPLIT_PATTERN_STR && @{ $tok_c->encode(text => "12345") } > 1);
+
+    unlink "$tmpfile.model", "$tmpfile.vocab";
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+say "\n" . "=" x 70;
+say "TEST 16: Training is deterministic across Perl hash seeds";
+say "=" x 70;
+
+{
+    # Equally frequent pairs are tie-broken by first-seen order. Before
+    # 2026-10-23 chunks were visited in hash order, which Perl randomises per
+    # run, so the same corpus trained a different vocab every time.
+    my $child = q{
+        use ML::Tokeniser;
+        open my $f, '<:encoding(UTF-8)', $ARGV[0] or die; local $/; my $text = <$f>;
+        my $t = ML::Tokeniser->new(vocab_size => 400);
+        { local *STDOUT; open STDOUT, '>', '/dev/null'; $t->train(text => $text); }
+        print join(';', map { join(',', @{ $_->{pair} }) } @{ $t->merges });
+    };
+    my @runs;
+    for my $seed (1, 2) {
+        local $ENV{PERL_HASH_SEED} = $seed; local $ENV{PERL_PERTURB_KEYS} = 0;
+        open my $p, '-|', $^X, '-I.', '-e', $child, $0 or die "cannot run child: $!";
+        local $/; push @runs, scalar <$p>; close $p;
+    }
+    ok("identical merges under PERL_HASH_SEED=1 and =2", length($runs[0]) && $runs[0] eq $runs[1]);
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

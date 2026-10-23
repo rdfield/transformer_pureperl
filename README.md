@@ -65,7 +65,7 @@ perl test_linear.pl       # ML::Linear          (56/56)
 perl test_mha.pl          # ML::MHA             (656/656)
 perl test_layernorm.pl    # ML::LayerNorm       (42/42)
 perl test_embedding.pl    # ML::Embedding       (31/31)
-perl test_tokeniser.pl    # ML::Tokeniser       (41/41)
+perl test_tokeniser.pl    # ML::Tokeniser       (54/54)
 ```
 
 Each `train_model.pl` epoch saves a checkpoint: `d256_l2_h4_{epoch}.json`.
@@ -110,12 +110,28 @@ repeat. Run these after changing any `backward`.
 ### Tokeniser and vocabularies
 
 `ML::Tokeniser` is byte-level BPE in the style of minbpe, with GPT-4's pre-tokenisation
-split. `build_client_vocab.pl` trains a vocabulary of a chosen size on a text file and
-writes the `.model`/`.vocab` pair the other scripts load; `email_csv_to_txt.pl` produces
-that training text from the labelled email export, one body per line with the labels
-dropped. `test_tokeniser.pl` checks the tokeniser end to end — 41 tests, including
-encode/decode round trips on seen, unseen and multi-byte UTF-8 text and a save/load round
-trip. Vocabularies trained on client email are not committed.
+split. Its encoding is byte-identical to minbpe's `RegexTokenizer`, checked on 3,000 real
+emails (2.7M tokens) with two vocabularies. Training uses minbpe's rule, the most frequent
+pair with ties to the one seen first, but tracks "first seen" incrementally, so some ties
+break differently: a vocabulary trained here is valid BPE, not always merge-for-merge
+identical to minbpe's. Training is deterministic. The split pattern is saved in the `.model`
+file and restored by `load()`; pass `pattern =>` to `new()` to train with another one.
+`train()` and `encode()` take decoded text, and warn once if given undecoded UTF-8 bytes.
+
+**Ids changed on 2026-10-23.** Before then the encoder picked each merge by its frequency in
+the text being encoded and ran without the pre-tokenisation split. Its output decoded
+correctly but was not canonical BPE, used about 1.4× more tokens, and took time growing with
+the square of the text length. Ids encoded before that date differ from today's for the same
+text, so a model trained on them should be retrained on fresh encodings; decoding old ids is
+unaffected.
+
+`build_client_vocab.pl` trains a vocabulary of a chosen size on a text file and writes the
+`.model`/`.vocab` pair the other scripts load; `email_csv_to_txt.pl` produces that training
+text from the labelled email export, one body per line with the labels dropped.
+`test_tokeniser.pl` checks the tokeniser end to end — 54 tests, including encode/decode round
+trips on seen, unseen and multi-byte UTF-8 text, save/load, merge order, prefix locality,
+UTF-8 training, pattern persistence and deterministic training. Vocabularies trained on
+client email are not committed.
 
 ### Classifier data
 

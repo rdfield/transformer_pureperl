@@ -16,7 +16,7 @@ my ($vocab_size, $infile, $outfile) = @ARGV;
 die "usage perl build_client_vocab.pl <vocab size> <train data file name> <output file name>" unless (defined($vocab_size) and defined($infile) and -e $infile and defined($outfile));
 
 my $tok = ML::Tokeniser->new(vocab_size => $vocab_size);
-my $emails = read_file($infile);
+my $emails = read_file($infile, binmode => ":utf8");   # train() takes decoded text
 
 $tok->train(text => $emails);
 $tok->register_special_tokens({
