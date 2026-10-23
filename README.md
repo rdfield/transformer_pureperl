@@ -198,6 +198,7 @@ README.
 
 ### Other documents
 
+- `ATTENTION_BACKWARD.md` — the derivation of the multi-head attention backward pass, keyed to the lines of `ML/MHA.pm` and `ML/Util.pm`
 - `TRAINING_STAGES.md` — the training stages of the d=768 summariser, with the commands
 - `TRIM_PIPELINE.md` — the specification for trimming raw email before it is summarised
 - `recommended_parameters.txt` — recommended training hyperparameters for the Perl model
